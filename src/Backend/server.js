@@ -1,6 +1,7 @@
 const express = require('express');
 const connectDB = require('./db');
 const { Game, User } = require('./models/Schemas');
+const { registerUser, loginUser } = require('./logic/userLogic');
 
 const app = express();
 app.use(express.json());
