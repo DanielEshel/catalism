@@ -32,8 +32,8 @@ const playerStateSchema = new mongoose.Schema({
   },
   techCards: [{ type: String }], // Unused Directive Cards [cite: 38]
   victoryPoints: { type: Number, default: 0 }, // Public VP only [cite: 38]
-  settlements: [{ type: String }], // Coordinates of "Small Cats" [cite: 38]
-  cities: [{ type: String }],      // Coordinates of "Big Cats" [cite: 38]
+  settlements: [{ type: [[Number]] }], // Coordinates of "Small Cats" [cite: 38]
+  cities: { type: [[Number]] },      // Coordinates of "Big Cats" [cite: 38]
   roads: [{ type: String }]        // Coordinates of "Wormhole Lanes" [cite: 38]
 }, { _id: false }); // No separate ID needed for sub-documents
 
@@ -46,7 +46,7 @@ const gameSchema = new mongoose.Schema({
     default: 'lobby' 
   }, // [cite: 19, 30]
   turn: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, // userId of active player [cite: 19, 30]
-  diceRoll: { type: Number, default: 0 }, // [cite: 19, 30]
+  diceRoll: { type: mongoose.Schema.Types.ObjectId, ref: 'Action' }, // [cite: 19, 30]
   boardState: { type: Object, default: {} }, // Hex config/tokens [cite: 19, 30]
   voidHoundPosition: { type: String, default: "0,0" }, // Current coordinates [cite: 19, 30]
   playerStates: [playerStateSchema], // Embedded array of PLAYER_STATE [cite: 20, 30, 38]
