@@ -19,23 +19,22 @@ const userSchema = new mongoose.Schema({
   largestVoidHoundHunterFleet: { type: Number, default: 0 } // [cite: 16]
 });
 
-// --- 2. PLAYER_STATE (Object within GAME) ---
-// Embedded within the GAME document for real-time performance[cite: 36, 37].
 const playerStateSchema = new mongoose.Schema({
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true }, // [cite: 38]
-  resources: { // Map of resource counts [cite: 38]
-    carbonFiber: { type: Number, default: 0 }, // Classic: Brick 
-    catnip: { type: Number, default: 0 },      // Classic: Grain 
-    mice: { type: Number, default: 0 },        // Classic: Wool 
-    cosmicMilk: { type: Number, default: 0 },   // Classic: Ore 
-    spaceCrystal: { type: Number, default: 0 }  // Classic: Wood 
-  },
-  techCards: [{ type: String }], // Unused Directive Cards [cite: 38]
-  victoryPoints: { type: Number, default: 0 }, // Public VP only [cite: 38]
-  settlements: [{ type: [[Number]] }], // Coordinates of "Small Cats" [cite: 38]
-  cities: { type: [[Number]] },      // Coordinates of "Big Cats" [cite: 38]
-  roads: [{ type: String }]        // Coordinates of "Wormhole Lanes" [cite: 38]
-}, { _id: false }); // No separate ID needed for sub-documents
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    // NEW FIELD: Tracks if the socket has actually joined
+    connected: { type: Boolean, default: false }, 
+    resources: {
+        carbonFiber: { type: Number, default: 0 },
+        catnip: { type: Number, default: 0 },
+        mice: { type: Number, default: 0 },
+        cosmicMilk: { type: Number, default: 0 },
+        spaceCrystal: { type: Number, default: 0 }
+    },
+    victoryPoints: { type: Number, default: 0 },
+    settlements: [String],
+    cities: [String],
+    roads: [String]
+}, { _id: false });
 
 // --- 3. GAME COLLECTION ---
 // Single source of truth for a live, active game[cite: 17, 28, 29].

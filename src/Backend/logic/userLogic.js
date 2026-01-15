@@ -1,20 +1,25 @@
 const { User } = require("../models/Schemas");
 const bcrypt = require("bcrypt");
+const jwt = require("jsonwebtoken"); // <--- THIS WAS LIKELY MISSING
 
-
+const JWT_SECRET = process.env.JWT_SECRET || "super_secret_kitten_key";
 const validateDisplayname = (name) => {
   const cleaned = String(name || "").trim();
   if (cleaned.length < 3 || cleaned.length > 20) {
     throw new Error("Display name must be between 3 and 20 characters.");
   }
   if (!/^[a-zA-Z0-9_]+$/.test(cleaned)) {
-    throw new Error("Display name can only contain letters, numbers, and underscores.");
+    throw new Error(
+      "Display name can only contain letters, numbers, and underscores.",
+    );
   }
   return cleaned;
 };
 
 const validateEmail = (email) => {
-  const cleaned = String(email || "").trim().toLowerCase();
+  const cleaned = String(email || "")
+    .trim()
+    .toLowerCase();
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   if (!emailRegex.test(cleaned)) throw new Error("Invalid email format.");
   return cleaned;
@@ -28,14 +33,16 @@ const validatePassword = (pass) => {
   return cleaned;
 };
 
-
+// --- HELPER: GENERATE TOKEN ---
+const generateToken = (userId) => {
+  return jwt.sign({ id: userId }, JWT_SECRET, { expiresIn: "1d" });
+};
 /**
- **  Register a new user after validating inputs 
- * @param {*} userData 
+ **  Register a new user after validating inputs
+ * @param {*} userData
  * @returns Newly created user object
  */
 const registerUser = async (userData) => {
-  // Use the RETURNED cleaned values
   const email = validateEmail(userData.email);
   const displayName = validateDisplayname(userData.displayName);
   const password = validatePassword(userData.password);
@@ -54,33 +61,37 @@ const registerUser = async (userData) => {
     losses: 0,
   });
 
-  return await newUser.save();
+  const savedUser = await newUser.save();
+
+  // Return the Token + User Info
+  return {
+    _id: savedUser._id,
+    displayName: savedUser.displayName,
+    token: generateToken(savedUser._id), // <--- KEY CHANGE
+  };
 };
 
 /**
- **  Authenticate user and return user object without passwordHash 
- * @param {*} credentials 
+ **  Authenticate user and return user object without passwordHash
+ * @param {*} credentials
  * @returns Authenticated user object
  */
 const loginUser = async (credentials) => {
-  // Sanitize and validate inputs
   const email = validateEmail(credentials.email);
   const password = String(credentials.password || "");
 
-  if (!email || !password) {
-    throw new Error("Email and password are required.");
-  }
-
-  
   const user = await User.findOne({ email });
   if (!user) throw new Error("Invalid email or password.");
 
   const isMatch = await bcrypt.compare(password, user.passwordHash);
   if (!isMatch) throw new Error("Invalid email or password.");
 
-  const userResponse = user.toObject();
-  delete userResponse.passwordHash;
-  return userResponse;
+  // Return the Token + User Info
+  return {
+    _id: user._id,
+    displayName: user.displayName,
+    token: generateToken(user._id), // <--- KEY CHANGE
+  };
 };
 
-module.exports = { registerUser, loginUser };
+module.exports = { registerUser, loginUser, JWT_SECRET };
