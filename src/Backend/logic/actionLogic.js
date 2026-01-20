@@ -18,8 +18,6 @@ const ACTIONS_REQUIRING_TURN = new Set([
   "roll_dice",
 ]);
 
-// Actions that strictly require the dice to be rolled first
-// (Note: 'roll_dice' is obviously excluded from this list)
 const ACTIONS_REQUIRING_ROLL = new Set([
   "build_road",
   "build_settlement",
@@ -30,48 +28,54 @@ const ACTIONS_REQUIRING_ROLL = new Set([
   "trade_offer",
 ]);
 
-// --- HELPER: NORMALIZE EDGE KEY ---
-// Ensures edge "3-5" is always stored as "3-5", never "5-3"
+// --- HELPERS (Standard) ---
 const getEdgeKey = (u, v) => (u < v ? `${u}-${v}` : `${v}-${u}`);
 
-// --- HELPER: SPACING CHECK (Graph Based) ---
+const getNextActivePlayer = (game, currentUserId) => {
+  const pIds = game.playerIds;
+  let currentIndex = pIds.findIndex((id) => id.toString() === currentUserId);
+
+  // Look ahead up to N times (where N is player count)
+  for (let i = 1; i < pIds.length; i++) {
+    const nextIndex = (currentIndex + i) % pIds.length;
+    const nextId = pIds[nextIndex];
+    const nextPlayer = game.playerStates.find(
+      (p) => p.userId.toString() === nextId.toString(),
+    );
+
+    if (!nextPlayer.hasQuit) {
+      return nextId;
+    }
+  }
+  return null; // Should imply game over if null
+};
+
 const checkSettlementSpacing = (newNodeId, game) => {
-  // 1. Collect all occupied nodes (Settlements + Cities) from ALL players
   const occupiedNodes = new Set();
   game.playerStates.forEach((p) => {
-    p.settlements.forEach((s) => occupiedNodes.add(s)); // s is an Integer ID
+    p.settlements.forEach((s) => occupiedNodes.add(s));
     p.cities.forEach((c) => occupiedNodes.add(c));
   });
 
-  // 2. Is the spot itself taken?
   if (occupiedNodes.has(newNodeId)) return false;
 
-  // 3. Are any neighbors taken? (The Distance Rule)
-  // We look up the node in the board graph to find its physical connections
   const node = game.boardState.nodes.find((n) => n.id === newNodeId);
   if (!node) throw new Error(`Invalid Node ID: ${newNodeId}`);
 
   for (const neighborId of node.connections) {
     if (occupiedNodes.has(neighborId)) return false;
   }
-
   return true;
 };
 
-// --- HELPER: ROAD ADJACENCY (Graph Based) ---
 const checkRoadAdjacency = (u, v, player) => {
-  // 1. Check connection to own Settlements/Cities (Node IDs)
-  // If I have a house at Node U or Node V, I can build a road there.
   const hasStructure = [...player.settlements, ...player.cities].some(
     (nodeId) => nodeId === u || nodeId === v,
   );
   if (hasStructure) return true;
 
-  // 2. Check connection to existing Roads
-  // My existing roads are strings "A-B". I check if they share a vertex.
   return player.roads.some((roadKey) => {
     const [rU, rV] = roadKey.split("-").map(Number);
-    // Does the existing road share a vertex with the new road?
     return rU === u || rU === v || rV === u || rV === v;
   });
 };
@@ -90,61 +94,52 @@ const checkAndConsumeResources = (player, costType, isFree = false) => {
 };
 
 const distributeResources = (game, diceNumber) => {
-  if (diceNumber === 7) return {}; // Robber logic handled separately later
+  if (diceNumber === 7) return {};
+  const distributionLog = {};
 
-  const distributionLog = {}; // { userId: { resource: amount } }
-
-  // 1. Find all Hexes matching the dice number
   const activeHexes = game.boardState.hexes.filter(
     (h) => h.number === diceNumber && h.resource !== "Void",
   );
 
-  // 2. For each Hex, find players touching it
   activeHexes.forEach((hex) => {
-    // Robber blocks production!
     if (game.boardState.robberHex === hex.id) return;
 
-    const resourceType = hex.resource;
+    // ... (Map resource keys same as before) ...
+    const resourceMap = {
+      "Space Crystal": "spaceCrystal",
+      Mice: "mice",
+      Catnip: "catnip",
+      "Carbon Fiber": "carbonFiber",
+      "Cosmic Milk": "cosmicMilk",
+    };
+    const resKey = resourceMap[hex.resource];
+    if (!resKey) return;
 
-    // Check every node (corner) of this hex
     hex.nodeIds.forEach((nodeId) => {
-      // Did anyone build here?
       game.playerStates.forEach((player) => {
-        let amount = 0;
+        if (player.hasQuit) return;
 
-        // +1 for Settlement
+        let amount = 0;
         if (player.settlements.includes(nodeId)) amount += 1;
-        // +2 for City
         if (player.cities.includes(nodeId)) amount += 2;
 
         if (amount > 0) {
-          // Update Player Inventory
-          const resKey = resourceMapKey(resourceType); // Helper to map "Space Crystal" -> "spaceCrystal"
-          if (resKey) {
-            player.resources[resKey] = (player.resources[resKey] || 0) + amount;
-
-            // Log for the event payload
-            if (!distributionLog[player.userId])
-              distributionLog[player.userId] = {};
-            distributionLog[player.userId][resKey] =
-              (distributionLog[player.userId][resKey] || 0) + amount;
-          }
+          player.resources[resKey] = (player.resources[resKey] || 0) + amount;
+          const pId = player.userId.toString();
+          if (!distributionLog[pId]) distributionLog[pId] = {};
+          distributionLog[pId][resKey] =
+            (distributionLog[pId][resKey] || 0) + amount;
         }
       });
     });
   });
-
   return distributionLog;
 };
 
-// --- HELPER: AUTO-PLACER ---
 const performAutoPlacement = (game, player) => {
-  // 1. Find a legal node
-  // Shuffle nodes to make it random
   const shuffledNodes = [...game.boardState.nodes].sort(
     () => Math.random() - 0.5,
   );
-
   let validNode = null;
   for (const node of shuffledNodes) {
     if (checkSettlementSpacing(node.id, game)) {
@@ -153,21 +148,22 @@ const performAutoPlacement = (game, player) => {
     }
   }
 
-  if (!validNode) return "Error: No space left on board!";
+  if (!validNode) throw new Error("Auto-place failed: No space left!");
 
-  // 2. Find a connected edge for the road
-  // Just pick the first neighbor
   const neighborId = validNode.connections[0];
   const roadKey = getEdgeKey(validNode.id, neighborId);
 
-  // 3. Execute
   player.settlements.push(validNode.id);
   player.roads.push(roadKey);
   player.victoryPoints += 1;
 
-  return `Server auto-placed at Node ${validNode.id}.`;
+  return {
+    message: `Server auto-placed at Node ${validNode.id}.`,
+    details: { settlement: validNode.id, road: roadKey },
+  };
 };
 
+// --- MAIN PROCESSOR ---
 const processAction = async (gameId, userId, actionType, payload) => {
   const game = await Game.findById(gameId);
   if (!game) throw new Error("Game not found");
@@ -175,24 +171,23 @@ const processAction = async (gameId, userId, actionType, payload) => {
   const player = game.playerStates.find((p) => p.userId.toString() === userId);
   if (!player) throw new Error("Player not found.");
 
-  // 1. GENERAL TURN CHECK
+  // 1. Fetch Last Action (Needed for strict setup enforcement)
+  // We check what this user did LAST to prevent chaining turns.
+  const lastAction = await Action.findOne({ gameId }).sort({ actionNum: -1 });
+
+  // 2. Validation
   if (ACTIONS_REQUIRING_TURN.has(actionType)) {
     if (game.turn.toString() !== userId) throw new Error(`Not your turn!`);
   }
 
-  // 2. SETUP PHASE DETECTION
-  const totalSettlements = game.playerStates.reduce(
+  let totalSettlements = game.playerStates.reduce(
     (sum, p) => sum + p.settlements.length + p.cities.length,
     0,
   );
   const isSetupPhase = totalSettlements < game.maxPlayers * 2;
 
-  // 3. DICE ROLL ENFORCEMENT
-  // If we are in the Normal Phase (not setup), and the action requires a roll...
   if (!isSetupPhase && ACTIONS_REQUIRING_ROLL.has(actionType)) {
-    if (!game.diceRolled) {
-      throw new Error("You must roll the dice before taking this action!");
-    }
+    if (!game.diceRolled) throw new Error("You must roll the dice first!");
   }
 
   let logMessage = "";
@@ -206,7 +201,6 @@ const processAction = async (gameId, userId, actionType, payload) => {
       const d1 = Math.floor(Math.random() * 6) + 1;
       const d2 = Math.floor(Math.random() * 6) + 1;
       const sum = d1 + d2;
-
       const gains = distributeResources(game, sum);
 
       game.diceRolled = true;
@@ -219,35 +213,84 @@ const processAction = async (gameId, userId, actionType, payload) => {
 
     case "build_settlement":
       checkAndConsumeResources(player, "SMALL_CAT", isSetupPhase);
+      const sNodeId = Number(payload.nodeId);
 
-      if (!checkSettlementSpacing(Number(payload.nodeId), game)) {
-        throw new Error("Too close to another settlement!");
+      // 🛑 SETUP VALIDATION
+      if (isSetupPhase) {
+        // A. FORCE END TURN
+        // If the last thing you did was build a road, you are done for this turn.
+        if (
+          lastAction &&
+          lastAction.userId === userId &&
+          lastAction.actionType === "build_road"
+        ) {
+          throw new Error(
+            "You must end your turn before building another settlement.",
+          );
+        }
+
+        // B. ROUND TARGET CHECK
+        // Round 1 (Total < Max): Limit 1. Round 2 (Total >= Max): Limit 2.
+        const roundTarget = totalSettlements < game.maxPlayers ? 1 : 2;
+        if (player.settlements.length >= roundTarget) {
+          throw new Error(
+            `You can only place ${roundTarget} settlement(s) in this round.`,
+          );
+        }
+
+        // C. SEQUENCE CHECK (S before R)
+        if (player.settlements.length > player.roads.length) {
+          throw new Error(
+            "You must place a road for your current settlement first.",
+          );
+        }
       }
+
+      if (!checkSettlementSpacing(sNodeId, game)) throw new Error("Too close!");
       if (!isSetupPhase) {
         const hasRoad = player.roads.some((r) => {
           const [u, v] = r.split("-").map(Number);
-          return u === Number(payload.nodeId) || v === Number(payload.nodeId);
+          return u === sNodeId || v === sNodeId;
         });
-        if (!hasRoad) throw new Error("Must connect to your road network.");
+        if (!hasRoad) throw new Error("Must connect to road network.");
       }
 
-      player.settlements.push(Number(payload.nodeId));
+      player.settlements.push(sNodeId);
       player.victoryPoints += 1;
       logMessage = isSetupPhase
         ? "Placed starting colony."
         : "Established a Small Cat colony.";
+
+      event = {
+        type: "BUILD_PLACED",
+        payload: { type: "settlement", nodeId: sNodeId, userId },
+      };
       break;
 
     case "build_road":
       checkAndConsumeResources(player, "WORMHOLE_LANE", isSetupPhase);
+      const rU = Number(payload.u);
+      const rV = Number(payload.v);
+      const roadKey = getEdgeKey(rU, rV);
 
-      const u = Number(payload.u);
-      const v = Number(payload.v);
-      const roadKey = getEdgeKey(u, v);
+      // 🛑 SETUP VALIDATION
+      if (isSetupPhase) {
+        // A. ROUND TARGET CHECK
+        const roundTarget = totalSettlements < game.maxPlayers ? 1 : 2;
+        if (player.roads.length >= roundTarget) {
+          throw new Error(
+            `You can only place ${roundTarget} road(s) in this round.`,
+          );
+        }
+        // B. SEQUENCE CHECK (S before R)
+        if (player.settlements.length <= player.roads.length) {
+          throw new Error("Place a settlement first.");
+        }
+      }
 
       if (
         !game.boardState.edges.some(
-          (e) => (e.u === u && e.v === v) || (e.u === v && e.v === u),
+          (e) => (e.u === rU && e.v === rV) || (e.u === rV && e.v === rU),
         )
       ) {
         throw new Error("Invalid lane.");
@@ -255,92 +298,151 @@ const processAction = async (gameId, userId, actionType, payload) => {
       if (game.playerStates.some((p) => p.roads.includes(roadKey))) {
         throw new Error("Lane occupied.");
       }
-
-      if (player.roads.length > 0 || player.settlements.length > 0) {
-        if (!checkRoadAdjacency(u, v, player))
-          throw new Error("Not connected!");
+      if (
+        (player.roads.length > 0 || player.settlements.length > 0) &&
+        !checkRoadAdjacency(rU, rV, player)
+      ) {
+        throw new Error("Not connected!");
       }
 
       player.roads.push(roadKey);
       logMessage = "Constructed a Wormhole Lane.";
+
+      event = {
+        type: "BUILD_PLACED",
+        payload: { type: "road", u: rU, v: rV, userId },
+      };
       break;
 
     case "build_city":
       checkAndConsumeResources(player, "BIG_CAT");
-      const cityNodeId = Number(payload.nodeId);
+      const cNodeId = Number(payload.nodeId);
+      const settIndex = player.settlements.indexOf(cNodeId);
 
-      const settIndex = player.settlements.indexOf(cityNodeId);
       if (settIndex === -1) throw new Error("No settlement there to upgrade.");
-
       player.settlements.splice(settIndex, 1);
-      player.cities.push(cityNodeId);
+      player.cities.push(cNodeId);
       player.victoryPoints += 1;
       logMessage = "Upgraded to Big Cat Metropolis.";
+
+      event = {
+        type: "BUILD_PLACED",
+        payload: { type: "city", nodeId: cNodeId, userId },
+      };
       break;
 
     case "end_turn":
-      // Global check handles the "must roll dice" rule for Normal Phase
-
       if (isSetupPhase) {
-        // --- AUTO-PLACEMENT CHECK ---
-        // 1. Calculate how many items this player SHOULD have placed by now.
-        // Round 1 (Forward): Everyone should have 1 Settlement + 1 Road.
-        // Round 2 (Backward): Everyone should have 2 Settlements + 2 Roads.
+        if (player.settlements.length !== player.roads.length) {
+          throw new Error(
+            "Finish your build (Settlement + Road) before ending turn.",
+          );
+        }
 
-        // We can infer the target count based on total settlements on board.
-        // If total settlements < maxPlayers, we are in Round 1 (Target: 1).
-        // If total settlements >= maxPlayers, we are in Round 2 (Target: 2).
         const expectedCount = totalSettlements >= game.maxPlayers ? 2 : 1;
+        let autoActionData = null;
 
-        if (
-          player.settlements.length < expectedCount ||
-          player.roads.length < expectedCount
-        ) {
-          // The player hit "End Turn" (or timed out) without building!
-          logMessage = performAutoPlacement(game, player);
-        }
-
-        // --- SNAKE DRAFT TURN ORDER ---
-        const currentIdx = game.playerIds.findIndex(
-          (id) => id.toString() === userId,
-        );
-        let nextIdx;
-
-        if (
-          currentIdx === game.maxPlayers - 1 &&
-          totalSettlements < game.maxPlayers
-        ) {
-          nextIdx = currentIdx; // Player 4 goes again immediately (End of Round 1)
-        } else if (totalSettlements >= game.maxPlayers) {
-          nextIdx = currentIdx - 1; // Reverse order (Round 2)
-          if (nextIdx < 0) {
-            nextIdx = 0;
-            logMessage += " Setup Complete. Game Begins!";
-          }
+        // Auto-Placer (Protection against timeouts/errors)
+        if (player.settlements.length < expectedCount) {
+          const autoResult = performAutoPlacement(game, player);
+          logMessage = autoResult.message;
+          autoActionData = autoResult.details;
+          totalSettlements++; // Update local count for turn logic
         } else {
-          nextIdx = currentIdx + 1; // Forward order
+          logMessage = "Ended their turn.";
         }
-        game.turn = game.playerIds[nextIdx];
 
-        // Ensure dice flag is clean for Game Start
-        if (nextIdx === 0 && totalSettlements >= game.maxPlayers) {
-          game.diceRolled = false;
+        // Snake Draft Turn Logic
+        let nextPlayerIndex;
+        if (totalSettlements < game.maxPlayers) {
+          nextPlayerIndex = getNextActivePlayer(game, userId); // Round 1 (Forward)
+        } else {
+          nextPlayerIndex = game.maxPlayers * 2 - 1 - totalSettlements; // Round 2 (Reverse)
         }
+
+        if (nextPlayerIndex < 0) {
+          game.turn = game.playerIds[0];
+          game.diceRolled = false;
+          logMessage += " Setup Complete. Game Begins!";
+        } else {
+          game.turn = game.playerIds[nextPlayerIndex];
+        }
+
+        event = {
+          type: "TURN_CHANGED",
+          payload: {
+            newTurnUserId: game.turn,
+            isSetupPhase: true,
+            autoAction: autoActionData,
+          },
+        };
       } else {
-        // --- NORMAL PHASE ---
+        // Normal Phase
         const currentIdx = game.playerIds.findIndex(
           (id) => id.toString() === userId,
         );
         game.turn = game.playerIds[(currentIdx + 1) % game.playerIds.length];
-
-        // Reset dice for next player
         game.diceRolled = false;
         logMessage = "Ended their turn.";
-      }
 
-      event = { type: "TURN_CHANGED", payload: { newTurnUserId: game.turn } };
+        event = {
+          type: "TURN_CHANGED",
+          payload: {
+            newTurnUserId: game.turn,
+            isSetupPhase: false,
+          },
+        };
+      }
       break;
-    // ... (trade_offer, trade_bank, etc.)
+    case "quit_game":
+      if (player.hasQuit) throw new Error("Already quit.");
+
+      // A. Mark as Quit & Wipe Resources
+      player.hasQuit = true;
+      player.resources = {
+        carbonFiber: 0,
+        spaceCrystal: 0,
+        mice: 0,
+        catnip: 0,
+        cosmicMilk: 0,
+      };
+      player.developmentCards = [];
+      player.connected = false; // Effectively disconnect them too
+
+      logMessage = "ABANDONED THE MISSION (Quit Game).";
+
+      // B. Check Win Condition (Last Man Standing)
+      const activeSurvivors = game.playerStates.filter((p) => !p.hasQuit);
+
+      if (activeSurvivors.length === 1) {
+        // GAME OVER - The survivor wins!
+        const winner = activeSurvivors[0];
+        game.status = "finished";
+        event = {
+          type: "GAME_OVER",
+          payload: {
+            winnerId: winner.userId,
+            score: winner.victoryPoints,
+            reason: "Last Pilot Standing",
+          },
+        };
+        logMessage += ` ${winner.userId} is the sole survivor!`;
+      } else {
+        // C. If it was the quitter's turn, pass it immediately
+        if (game.turn.toString() === userId) {
+          const nextId = getNextActivePlayer(game, userId);
+          game.turn = nextId;
+          game.diceRolled = false;
+
+          // Append event info so frontend knows turn changed
+          event = {
+            type: "TURN_CHANGED",
+            payload: { newTurnUserId: game.turn },
+          };
+          logMessage += " Turn passed automatically.";
+        }
+      }
+      break;
   }
 
   if (player.victoryPoints >= 10) {
@@ -354,7 +456,6 @@ const processAction = async (gameId, userId, actionType, payload) => {
   await game.save();
 
   // Audit Log
-  const lastAction = await Action.findOne({ gameId }).sort({ actionNum: -1 });
   const nextNum = lastAction ? lastAction.actionNum + 1 : 1;
   await Action.create({
     gameId,

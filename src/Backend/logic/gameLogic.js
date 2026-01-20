@@ -1,36 +1,5 @@
 const { Game } = require('../models/Schemas');
-
-// --- CONSTANTS ---
-const COSTS = {
-    WORMHOLE_LANE: { carbonFiber: 1, spaceCrystal: 1 },
-    SMALL_CAT: { carbonFiber: 1, catnip: 1, mice: 1, spaceCrystal: 1 },
-    BIG_CAT: { cosmicMilk: 3, catnip: 2 }
-};
-
-// --- BOARD GENERATION ---
-const generateBoard = () => {
-    const resourceDeck = [
-        ...Array(4).fill('Space Crystal'), 
-        ...Array(4).fill('Mice'),          
-        ...Array(4).fill('Catnip'),        
-        ...Array(3).fill('Carbon Fiber'),  
-        ...Array(3).fill('Cosmic Milk'),   
-        'Void'                             
-    ];
-    const numberTokens = [5, 2, 6, 3, 8, 10, 9, 12, 11, 4, 8, 10, 9, 4, 5, 6, 3, 11];
-
-    const shuffle = (array) => array.sort(() => Math.random() - 0.5);
-    const shuffledRes = shuffle(resourceDeck);
-    const shuffledNums = shuffle(numberTokens);
-
-    let numIndex = 0;
-    const hexes = shuffledRes.map((resource, i) => {
-        if (resource === 'Void') return { id: i, resource, number: null }; 
-        return { id: i, resource, number: shuffledNums[numIndex++] };
-    });
-
-    return { hexes, robberLocation: hexes.find(h => h.resource === 'Void').id };
-};
+const { generateBoardGraph } = require('./boardLogic'); // <--- IMPORT NEW LOGIC
 
 // --- CORE LOGIC ---
 
@@ -39,39 +8,25 @@ const createGame = async (hostId, maxPlayers = 4) => {
     const newGame = new Game({
         hostId,
         playerIds: [hostId],
-        playerStates: [{ userId: hostId, resources: {}, victoryPoints: 0, settlements: [], cities: [], roads: [] }],
+        // Host initializes empty; resources/stats added upon join/start usually, 
+        // but initializing basic state here is fine.
+        playerStates: [{ 
+            userId: hostId, 
+            connected: true, // Host is implicitly connected
+            resources: { carbonFiber: 2, catnip: 2, mice: 2, cosmicMilk: 0, spaceCrystal: 2 }, 
+            victoryPoints: 0, 
+            settlements: [], 
+            cities: [], 
+            roads: [] 
+        }],
         maxPlayers,
         status: 'lobby',
-        boardState: null
+        boardState: null // Board is generated when game starts
     });
     return await newGame.save();
 };
 
-// --- HELPER: PURGE GHOST PLAYERS ---
-const purgeGhostPlayer = async (gameId, userId) => {
-    try {
-        const game = await Game.findById(gameId);
-        if (!game) return;
-
-        // Check if player is still in "Ghost" mode (connected: false)
-        const playerIndex = game.playerStates.findIndex(p => p.userId.toString() === userId);
-        
-        if (playerIndex !== -1 && game.playerStates[playerIndex].connected === false) {
-            console.log(`Purging ghost player ${userId} from game ${gameId} (Timeout)`);
-            
-            // Remove from states array
-            game.playerStates.splice(playerIndex, 1);
-            // Remove from IDs array
-            game.playerIds = game.playerIds.filter(id => id.toString() !== userId);
-            
-            await game.save();
-        }
-    } catch (err) {
-        console.error("Ghost Purge Error:", err.message);
-    }
-};
-
-// 1. HTTP STEP: Request a Reservation
+// 2. HTTP STEP: Request a Reservation
 const requestJoinGame = async (gameId, userId) => {
     const game = await Game.findById(gameId);
     if (!game) throw new Error("Game not found.");
@@ -86,13 +41,11 @@ const requestJoinGame = async (gameId, userId) => {
     if (game.playerIds.length >= game.maxPlayers) throw new Error("Lobby is full.");
 
     // RESERVE THE SLOT (Mark as NOT connected)
-    // If they were already in the ID list but disconnected, this might duplicate, 
-    // so we ensure cleanliness:
     if (!game.playerIds.includes(userId)) {
         game.playerIds.push(userId);
         game.playerStates.push({
             userId,
-            connected: false, // <--- KEY FLAG
+            connected: false, // <--- KEY FLAG (Waiting for socket)
             resources: { carbonFiber: 2, catnip: 2, mice: 2, cosmicMilk: 0, spaceCrystal: 2 },
             victoryPoints: 0, settlements: [], cities: [], roads: []
         });
@@ -100,14 +53,13 @@ const requestJoinGame = async (gameId, userId) => {
 
     await game.save();
 
-    // We don't await this. It runs in the background.
+    // Start 5-second timer to purge if they don't connect via socket
     setTimeout(() => purgeGhostPlayer(gameId, userId), 5000);
 
     return { status: "reserved_awaiting_socket" };
 };
 
-
-// 2. SOCKET STEP: Finalize & Check Start
+// 3. SOCKET STEP: Finalize & Check Start
 const finalizeSocketJoin = async (gameId, userId) => {
     const game = await Game.findById(gameId);
     if (!game) throw new Error("Game not found");
@@ -132,8 +84,10 @@ const finalizeSocketJoin = async (gameId, userId) => {
         game.status = 'in-progress';
         game.startTime = new Date();
         game.turn = game.playerIds[0];
-        // Ensure generateBoard is defined or imported
-        // game.boardState = generateBoard(); 
+        
+        // --- HERE IS THE FIX ---
+        // We use the new graph generator!
+        game.boardState = generateBoardGraph(); 
         
         event = {
             type: 'GAME_STARTED',
@@ -145,10 +99,66 @@ const finalizeSocketJoin = async (gameId, userId) => {
     return { game, event };
 };
 
+const purgeGhostPlayer = async (gameId, userId) => {
+    try {
+        // 1. Re-fetch the FRESH game state (Crucial!)
+        const game = await Game.findById(gameId);
+        if (!game) return;
 
-// 4. State Fetch
+        const playerIndex = game.playerStates.findIndex(p => p.userId.toString() === userId);
+        
+        // 2. SAFETY CHECK: Only purge if they are STILL disconnected
+        if (playerIndex !== -1) {
+            const player = game.playerStates[playerIndex];
+            
+            // If they are marked 'connected: true', DO NOT PURGE THEM.
+            if (player.connected) {
+                console.log(`Ghost Purge Cancelled for ${userId} (Player successfully connected)`);
+                return; 
+            }
+
+            console.log(`Purging ghost player ${userId} from game ${gameId} (Timeout)`);
+            
+            // Remove from states array
+            game.playerStates.splice(playerIndex, 1);
+            // Remove from IDs array
+            game.playerIds = game.playerIds.filter(id => id.toString() !== userId);
+            
+            await game.save();
+        }
+    } catch (err) {
+        console.error("Ghost Purge Error:", err.message);
+    }
+};
+
 const getGameState = async (gameId) => {
+    if (!gameId) return null;
     return await Game.findById(gameId).populate('hostId', 'displayName');
 };
 
-module.exports = { createGame, requestJoinGame, finalizeSocketJoin, getGameState, purgeGhostPlayer };
+// UPDATED: Now accepts userId to find their specific game
+const listOpenGames = async (userId) => {
+    // 1. Get all joinable games
+    const lobbyGames = await Game.find({ 
+        status: { $in: ['lobby', 'in-progress'] } 
+    }).select('status playerStates maxPlayers startTime playerIds'); 
+
+    // 2. Check if THIS user is already in one of them
+    let activeGameId = null;
+    if (userId) {
+        const myGame = lobbyGames.find(g => g.playerIds.includes(userId));
+        if (myGame) activeGameId = myGame._id;
+    }
+
+    // Return object with list AND the active ID
+    return { games: lobbyGames, activeGameId };
+};
+
+module.exports = { 
+    createGame, 
+    requestJoinGame, 
+    finalizeSocketJoin, 
+    getGameState, 
+    listOpenGames, // Exported correctly now
+    purgeGhostPlayer 
+};

@@ -27,6 +27,7 @@ const edgeSchema = new mongoose.Schema({
 const playerStateSchema = new mongoose.Schema({
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     connected: { type: Boolean, default: false },
+    hasQuit: { type: Boolean, default: false },
     resources: {
         carbonFiber: { type: Number, default: 0 },
         catnip: { type: Number, default: 0 },

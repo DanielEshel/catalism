@@ -1,8 +1,8 @@
+// src/Backend/controllers/socketController.js
 const { Server } = require("socket.io");
 const jwt = require("jsonwebtoken");
-const GameLogic = require('../logic/gameLogic'); 
-// Import the secret directly from UserLogic to ensure it matches HTTP auth
 const { JWT_SECRET } = require('../logic/userLogic'); 
+const GameLogic = require('../logic/gameLogic'); 
 
 let io;
 
@@ -11,73 +11,113 @@ const init = (httpServer, actionHandler) => {
         cors: { origin: "*", methods: ["GET", "POST"] } 
     });
 
-    // This runs BEFORE 'connection'. If next(err) is called, connection is refused.
+    // --- AUTH MIDDLEWARE ---
     io.use((socket, next) => {
-        // Client must send: io(url, { auth: { token: "..." } })
         const token = socket.handshake.auth.token;
-
-        if (!token) {
-            console.warn(`Connection rejected: No token (Socket ID: ${socket.id})`);
-            return next(new Error("Authentication error: No token provided."));
-        }
-
+        if (!token) return next(new Error("Auth Error"));
         try {
-            // Verify the digital signature
             const decoded = jwt.verify(token, JWT_SECRET);
-            
-            // Success! Attach the REAL User ID to the socket session
-            // We verify identity HERE, once. We don't trust the client's payload.
             socket.data.userId = decoded.id; 
             next();
-        } catch (err) {
-            console.warn(`Connection rejected: Invalid token (Socket ID: ${socket.id})`);
-            next(new Error("Authentication error: Invalid token."));
-        }
+        } catch (err) { next(new Error("Invalid Token")); }
     });
 
-    // --- CONNECTION HANDLER ---
-    // Only verified users reach this point
     io.on("connection", (socket) => {
-        console.log(`🔌 [Socket] Auth Success: User ${socket.data.userId}`);
-
-        // A. JOIN GAME
+        
+        // A. JOIN GAME (The Fix is here)
         socket.on("join_game", async ({ gameId }) => {
             try {
-                // SECURITY: Use the ID from the token (socket.data.userId)
-                // This prevents "I am User A but I want to join as User B"
-                const userId = socket.data.userId; 
-
+                const userId = socket.data.userId;
                 socket.join(gameId);
+
+                console.log(`🔌 [Socket] User ${userId} joining Game ${gameId}`);
+
                 const { game, event } = await GameLogic.finalizeSocketJoin(gameId, userId);
 
-                io.to(gameId).emit("action_log", { userId, message: "Link established." });
-                socket.emit("game_pulse", game);
+                // 1. Broadcast new state (shows player as connected)
+                await broadcastGameUpdate(gameId, game);
 
+                // 2. Announce via Log
+                broadcastToRoom(gameId, "action_log", { 
+                    userId, 
+                    message: "Comms Link Established.", 
+                    timestamp: new Date() 
+                });
+
+                // 3. If this join started the game, send the start event
                 if (event) {
-                    io.to(gameId).emit("game_event", event);
-                    io.to(gameId).emit("game_pulse", game);
+                    broadcastToRoom(gameId, "game_event", event);
                 }
+
             } catch (err) {
-                console.error("Join Error:", err.message);
+                console.error("Socket Join Error:", err.message);
                 socket.emit("error", { message: err.message });
-                socket.disconnect(); // Kick them out if logic fails
             }
         });
 
-        // B. CLIENT ACTIONS
-        socket.on("client_action", (data) => {
-            // SECURITY: Force the userId to match the token
+        // B. GAME ACTIONS
+        socket.on("game_action", (data) => {
             data.userId = socket.data.userId; 
-            
             if (actionHandler) actionHandler(socket, data);
         });
 
-        socket.on("disconnect", () => console.log(`Disconnected: ${socket.id}`));
+        socket.on("disconnect", () => {
+            console.log(`User ${socket.data.userId} disconnected`);
+            // Optional: Mark as connected: false in DB here if you want strict presence tracking
+        });
     });
 };
 
-const broadcastToRoom = (gameId, eventType, data) => { if (io) io.to(gameId).emit(eventType, data); };
-const sendToSocket = (socket, eventType, data) => { socket.emit(eventType, data); };
-const sendError = (socket, message) => { socket.emit("error", { message }); };
+// --- FOG OF WAR BROADCASTER ---
+const broadcastGameUpdate = async (gameId, gameRaw) => {
+    if (!io) return;
 
-module.exports = { init, broadcastToRoom, sendToSocket, sendError };
+    // 1. Convert Mongoose Document to Plain Object
+    const gameFull = gameRaw.toObject ? gameRaw.toObject() : gameRaw;
+
+    // 2. Get all sockets in the room
+    const sockets = await io.in(gameId).fetchSockets();
+
+    for (const socket of sockets) {
+        const myId = socket.data.userId;
+
+        // 3. Deep Clone
+        const personalizedGame = JSON.parse(JSON.stringify(gameFull));
+
+        // 4. Sanitize Opponents
+        personalizedGame.playerStates = personalizedGame.playerStates.map(p => {
+            // Handle populated vs unpopulated IDs
+            const pId = p.userId._id ? p.userId._id.toString() : p.userId.toString();
+
+            if (pId !== myId) {
+                // IT IS AN OPPONENT -> HIDE DATA
+                const resCount = Object.values(p.resources || {}).reduce((a,b)=>a+b, 0);
+                p.resources = null; 
+                p.resourceCount = resCount; 
+
+                const devCount = (p.developmentCards || []).length;
+                p.developmentCards = null; 
+                p.devCardCount = devCount; 
+            }
+            return p;
+        });
+
+        // 5. Emit
+        socket.emit('game_pulse', personalizedGame);
+    }
+};
+
+const broadcastToRoom = (gameId, eventType, data) => { 
+    if (io) io.to(gameId).emit(eventType, data); 
+};
+
+const sendError = (socket, message) => { 
+    socket.emit("error", { message }); 
+};
+
+module.exports = { 
+    init, 
+    broadcastGameUpdate, 
+    broadcastToRoom,     
+    sendError 
+};
