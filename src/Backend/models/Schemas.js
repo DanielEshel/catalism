@@ -1,28 +1,32 @@
-/**
- * models/Schemas.js
- * * This file contains the MongoDB schemas for the CATalism project.
- * It includes the User, Game, and Action collections based on the 
- * "Space Cat Catan: DB Design document"[cite: 1, 11].
- */
-
 const mongoose = require('mongoose');
 
-// --- 1. USER COLLECTION ---
-// Stores persistent player statistics and profiles[cite: 14, 15].
-const userSchema = new mongoose.Schema({
-  displayName: { type: String, required: true }, // [cite: 16, 27]
-  email: { type: String, required: true, unique: true }, // [cite: 27]
-  passwordHash: { type: String, required: true }, // [cite: 27]
-  wins: { type: Number, default: 0 }, // [cite: 16, 27]
-  losses: { type: Number, default: 0 }, // [cite: 16, 27]
-  longestDriftLaneAchieved: { type: Number, default: 0 }, // [cite: 16]
-  largestVoidHoundHunterFleet: { type: Number, default: 0 } // [cite: 16]
-});
+// --- SUB-SCHEMAS FOR BOARD GRAPH ---
+
+const hexSchema = new mongoose.Schema({
+    id: Number,
+    resource: String,
+    number: Number,
+    nodeIds: [Number] // The 6 corners
+}, { _id: false });
+
+const nodeSchema = new mongoose.Schema({
+    id: Number,
+    x: Number,
+    y: Number,
+    connections: [Number], // IDs of neighbor nodes
+    hexIds: [Number]       // IDs of hexes touching this node
+}, { _id: false });
+
+const edgeSchema = new mongoose.Schema({
+    u: Number,
+    v: Number
+}, { _id: false });
+
+// --- MAIN GAME SCHEMA ---
 
 const playerStateSchema = new mongoose.Schema({
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-    // NEW FIELD: Tracks if the socket has actually joined
-    connected: { type: Boolean, default: false }, 
+    connected: { type: Boolean, default: false },
     resources: {
         carbonFiber: { type: Number, default: 0 },
         catnip: { type: Number, default: 0 },
@@ -31,44 +35,50 @@ const playerStateSchema = new mongoose.Schema({
         spaceCrystal: { type: Number, default: 0 }
     },
     victoryPoints: { type: Number, default: 0 },
-    settlements: [String],
-    cities: [String],
-    roads: [String]
+    settlements: [Number], // Storing Node IDs (Integers)
+    cities: [Number],      // Storing Node IDs (Integers)
+    roads: [String]        // Storing Edge Keys ("u-v")
 }, { _id: false });
 
-// --- 3. GAME COLLECTION ---
-// Single source of truth for a live, active game[cite: 17, 28, 29].
 const gameSchema = new mongoose.Schema({
-  status: { 
-    type: String, 
-    enum: ['lobby', 'in-progress', 'finished'], 
-    default: 'lobby' 
-  }, // [cite: 19, 30]
-  turn: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, // userId of active player [cite: 19, 30]
-  diceRoll: { type: mongoose.Schema.Types.ObjectId, ref: 'Action' }, // [cite: 19, 30]
-  boardState: { type: Object, default: {} }, // Hex config/tokens [cite: 19, 30]
-  voidHoundPosition: { type: String, default: "0,0" }, // Current coordinates [cite: 19, 30]
-  playerStates: [playerStateSchema], // Embedded array of PLAYER_STATE [cite: 20, 30, 38]
-  hostId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true }, // [cite: 30]
-  playerIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }], // [cite: 30]
-  maxPlayers: { type: Number, default: 4 }, // [cite: 30]
-  startTime: { type: Date, default: Date.now } // [cite: 30]
+    hostId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    maxPlayers: { type: Number, default: 4 },
+    status: { type: String, enum: ['lobby', 'in-progress', 'finished'], default: 'lobby' },
+    playerIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+    playerStates: [playerStateSchema],
+    turn: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    startTime: Date,
+    
+    // NEW FLAG: Tracks if the dice have been rolled for the current turn
+    diceRolled: { type: Boolean, default: false }, 
+
+    boardState: {
+        hexes: [hexSchema],
+        nodes: [nodeSchema],
+        edges: [edgeSchema],
+        robberHex: Number
+    }
 });
 
-// --- 4. ACTION COLLECTION ---
-// Represents a single player action taken inside a game[cite: 21, 31, 32].
 const actionSchema = new mongoose.Schema({
-  gameId: { type: mongoose.Schema.Types.ObjectId, ref: 'Game', required: true }, // FK to GAME [cite: 33]
-  actionNum: { type: Number, required: true }, // Order of action [cite: 22, 33]
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true }, // FK to USER [cite: 33]
-  actionType: { type: String, required: true }, // e.g., 'roll_dice', 'build_road' [cite: 33, 35]
-  payload: { type: Object }, // Stores action data like dice result [cite: 33, 35]
-  timestamp: { type: Date, default: Date.now } // [cite: 33]
+    gameId: { type: mongoose.Schema.Types.ObjectId, ref: 'Game', required: true },
+    actionNum: Number,
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    actionType: String,
+    payload: mongoose.Schema.Types.Mixed,
+    timestamp: { type: Date, default: Date.now }
 });
 
-// Export all models
-module.exports = {
-  User: mongoose.model('User', userSchema),
-  Game: mongoose.model('Game', gameSchema),
-  Action: mongoose.model('Action', actionSchema)
-};
+const userSchema = new mongoose.Schema({
+    displayName: String,
+    email: { type: String, unique: true },
+    passwordHash: String,
+    wins: { type: Number, default: 0 },
+    losses: { type: Number, default: 0 }
+});
+
+const User = mongoose.model('User', userSchema);
+const Game = mongoose.model('Game', gameSchema);
+const Action = mongoose.model('Action', actionSchema);
+
+module.exports = { User, Game, Action };
