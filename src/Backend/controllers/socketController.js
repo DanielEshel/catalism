@@ -1,123 +1,90 @@
 // src/Backend/controllers/socketController.js
 const { Server } = require("socket.io");
-const jwt = require("jsonwebtoken");
-const { JWT_SECRET } = require('../logic/userLogic'); 
-const GameLogic = require('../logic/gameLogic'); 
+const { socketAuth } = require("../middleware/authMiddleware"); // <--- IMPORT HERE
+const GameLogic = require("../logic/gameLogic");
 
 let io;
 
 const init = (httpServer, actionHandler) => {
-    io = new Server(httpServer, { 
-        cors: { origin: "*", methods: ["GET", "POST"] } 
-    });
+	io = new Server(httpServer, {
+		cors: { origin: "*", methods: ["GET", "POST"] },
+	});
 
-    // --- AUTH MIDDLEWARE ---
-    io.use((socket, next) => {
-        const token = socket.handshake.auth.token;
-        if (!token) return next(new Error("Auth Error"));
-        try {
-            const decoded = jwt.verify(token, JWT_SECRET);
-            socket.data.userId = decoded.id; 
-            next();
-        } catch (err) { next(new Error("Invalid Token")); }
-    });
+	io.use(socketAuth);
 
-    io.on("connection", (socket) => {
-        
-        // A. JOIN GAME (The Fix is here)
-        socket.on("join_game", async ({ gameId }) => {
-            try {
-                const userId = socket.data.userId;
-                socket.join(gameId);
+	io.on("connection", (socket) => {
+		const userId = socket.data.userId;
 
-                console.log(`🔌 [Socket] User ${userId} joining Game ${gameId}`);
+		socket.join(userId);
 
-                const { game, event } = await GameLogic.finalizeSocketJoin(gameId, userId);
+		// A. JOIN GAME
+		socket.on("join_game", async ({ gameId }) => {
+			try {
+				socket.join(gameId); // Still join game room for "public" broadcasts if needed
 
-                // 1. Broadcast new state (shows player as connected)
-                await broadcastGameUpdate(gameId, game);
+				console.log(`[Socket] User ${userId} joining Game ${gameId}`);
 
-                // 2. Announce via Log
-                broadcastToRoom(gameId, "action_log", { 
-                    userId, 
-                    message: "Comms Link Established.", 
-                    timestamp: new Date() 
-                });
+				// Let the SERVER decide what to send back (Game Pulse, Events, etc.)
+				// We just pass the intent to the handler/logic if needed,
+				// but usually the frontend triggers a "sync_request" immediately after joining,
+				// or we rely on the logic in server.js to broadcast the update.
 
-                // 3. If this join started the game, send the start event
-                if (event) {
-                    broadcastToRoom(gameId, "game_event", event);
-                }
+				// For this specific event, we can let the handler know, or just do the
+				// socket logic here. For simplicity, we keep the DB update here:
+				const { game, event } = await GameLogic.finalizeSocketJoin(
+					gameId,
+					userId,
+				);
 
-            } catch (err) {
-                console.error("Socket Join Error:", err.message);
-                socket.emit("error", { message: err.message });
-            }
-        });
+				// We notify the Action Handler (server.js) to broadcast the update
+				// Alternatively, server.js could listen to this, but returning the result
+				// lets us handle it here effectively using the new Unicast tools if we wanted,
+				// BUT strictly following your request, we will emit events from server.js mostly.
 
-        // B. GAME ACTIONS
-        socket.on("game_action", (data) => {
-            data.userId = socket.data.userId; 
-            if (actionHandler) actionHandler(socket, data);
-        });
+				if (actionHandler) {
+					// We can mock an action to trigger the broadcast in server.js
+					actionHandler(socket, {
+						gameId,
+						actionType: "player_connected",
+						payload: { game, event },
+					});
+				}
+			} catch (err) {
+				console.error("Socket Join Error:", err.message);
+				socket.emit("error", { message: err.message });
+			}
+		});
 
-        socket.on("disconnect", () => {
-            console.log(`User ${socket.data.userId} disconnected`);
-            // Optional: Mark as connected: false in DB here if you want strict presence tracking
-        });
-    });
+		// B. GAME ACTIONS
+		socket.on("game_action", (data) => {
+			data.userId = socket.data.userId;
+			if (actionHandler) actionHandler(socket, data);
+		});
+
+		socket.on("disconnect", () => {
+			console.log(`User ${userId} disconnected`);
+		});
+	});
 };
 
-// --- FOG OF WAR BROADCASTER ---
-const broadcastGameUpdate = async (gameId, gameRaw) => {
-    if (!io) return;
-
-    // 1. Convert Mongoose Document to Plain Object
-    const gameFull = gameRaw.toObject ? gameRaw.toObject() : gameRaw;
-
-    // 2. Get all sockets in the room
-    const sockets = await io.in(gameId).fetchSockets();
-
-    for (const socket of sockets) {
-        const myId = socket.data.userId;
-
-        // 3. Deep Clone
-        const personalizedGame = JSON.parse(JSON.stringify(gameFull));
-
-        // 4. Sanitize Opponents
-        personalizedGame.playerStates = personalizedGame.playerStates.map(p => {
-            // Handle populated vs unpopulated IDs
-            const pId = p.userId._id ? p.userId._id.toString() : p.userId.toString();
-
-            if (pId !== myId) {
-                // IT IS AN OPPONENT -> HIDE DATA
-                const resCount = Object.values(p.resources || {}).reduce((a,b)=>a+b, 0);
-                p.resources = null; 
-                p.resourceCount = resCount; 
-
-                const devCount = (p.developmentCards || []).length;
-                p.developmentCards = null; 
-                p.devCardCount = devCount; 
-            }
-            return p;
-        });
-
-        // 5. Emit
-        socket.emit('game_pulse', personalizedGame);
-    }
+// 1. UNICAST: Send to a specific user
+const emitToUser = (userId, eventType, data) => {
+	if (io) io.to(userId).emit(eventType, data);
 };
 
-const broadcastToRoom = (gameId, eventType, data) => { 
-    if (io) io.to(gameId).emit(eventType, data); 
+// 2. BROADCAST: Send to everyone in a game (Chat, Public Events)
+const broadcastToRoom = (gameId, eventType, data) => {
+	if (io) io.to(gameId).emit(eventType, data);
 };
 
-const sendError = (socket, message) => { 
-    socket.emit("error", { message }); 
+// 3. ERROR: Send to specific socket (if we have the socket instance) or userId
+const sendError = (socket, message) => {
+	socket.emit("error", { message });
 };
 
-module.exports = { 
-    init, 
-    broadcastGameUpdate, 
-    broadcastToRoom,     
-    sendError 
+module.exports = {
+	init,
+	emitToUser,
+	broadcastToRoom,
+	sendError,
 };

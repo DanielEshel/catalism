@@ -1,21 +1,23 @@
-const { generateBoardGraph } = require('../logic/boardLogic');
+// visualize_game.js
+const fs = require('fs');
+const path = require('path');
+
+// Try to locate boardLogic whether running from root or src/Backend/testing
+let boardLogicPath = '../logic/boardLogic';
+if (!fs.existsSync(path.join(__dirname, boardLogicPath + '.js'))) {
+    boardLogicPath = './src/Backend/logic/boardLogic'; // Fallback for root
+}
+const { generateBoardGraph } = require(boardLogicPath);
 
 // ANSI Colors
 const C = {
-    // Resources
     WOOD: '\x1b[32m', SHEEP: '\x1b[36m', WHEAT: '\x1b[33m', 
     BRICK: '\x1b[31m', ORE: '\x1b[37m', VOID: '\x1b[35m', 
     NODE: '\x1b[90m', RESET: '\x1b[0m',
-
-    // Players
-    P1: '\x1b[91m', // Bright Red
-    P2: '\x1b[94m', // Bright Blue
-    P3: '\x1b[92m', // Bright Green
-    P4: '\x1b[93m'  // Bright Yellow
+    P1: '\x1b[91m', P2: '\x1b[94m', P3: '\x1b[92m', P4: '\x1b[93m'
 };
 
 const PLAYER_COLORS = [C.P1, C.P2, C.P3, C.P4];
-
 const RES_MAP = {
     'Space Crystal': { char: 'Cry', color: C.WOOD },
     'Mice':          { char: 'Mic', color: C.SHEEP },
@@ -25,64 +27,79 @@ const RES_MAP = {
     'Void':          { char: 'VOI', color: C.VOID }
 };
 
-// --- THE RENDERER ---
 const drawGame = (game) => {
-    const graph = game.boardState; // Use the game's internal board
+    if (!game || !game.boardState) {
+        console.error("❌ Cannot visualize: Game or Board State is missing.");
+        return;
+    }
+
+    const graph = game.boardState; 
     
-    // 1. BOUNDS & SCALE
+    // 1. CALCULATE BOUNDS
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
     graph.nodes.forEach(n => {
         if (n.x < minX) minX = n.x; if (n.x > maxX) maxX = n.x;
         if (n.y < minY) minY = n.y; if (n.y > maxY) maxY = n.y;
     });
 
-    const X_SCALE = 3; 
+    // 2. SCALE & GRID SETUP
+    const X_SCALE = 4; // Wider to fit text better
     const Y_SCALE = 2; 
-    const GRID_W = (maxX - minX) * X_SCALE + 10; 
-    const GRID_H = (maxY - minY) * Y_SCALE + 6;
+    const PADDING = 4;
     
-    const getX = (val) => (val - minX) * X_SCALE + 2; 
-    const getY = (val) => (val - minY) * Y_SCALE + 2;
+    const GRID_W = Math.ceil((maxX - minX) * X_SCALE) + (PADDING * 2); 
+    const GRID_H = Math.ceil((maxY - minY) * Y_SCALE) + (PADDING * 2);
+    
+    const getX = (val) => Math.floor((val - minX) * X_SCALE) + PADDING; 
+    const getY = (val) => Math.floor((val - minY) * Y_SCALE) + PADDING;
 
+    // Create safe grid
     const grid = Array(GRID_H).fill(null).map(() => Array(GRID_W).fill(' '));
 
-    // --- HELPER: MAP STRUCTURES ---
-    // Create quick lookup maps for "Is this node occupied?" and "Is this edge occupied?"
-    const nodeOwner = {}; // { nodeId: { color, type: 'S'|'C' } }
-    const edgeOwner = {}; // { "u-v": color }
+    // Helper to safely write to grid
+    const safeSet = (y, x, char) => {
+        if (y >= 0 && y < GRID_H && x >= 0 && x < GRID_W) {
+            grid[y][x] = char;
+        }
+    };
 
-    game.playerStates.forEach((p, idx) => {
-        const color = PLAYER_COLORS[idx % 4];
-        p.settlements.forEach(id => nodeOwner[id] = { color, type: 'S' });
-        p.cities.forEach(id => nodeOwner[id] = { color, type: 'C' });
-        p.roads.forEach(key => edgeOwner[key] = color);
-    });
+    const nodeOwner = {}; 
+    const edgeOwner = {}; 
 
-    // 2. PLOT NODES (Settlements/Cities)
+    if (game.playerStates) {
+        game.playerStates.forEach((p, idx) => {
+            const color = PLAYER_COLORS[idx % 4] || C.RESET;
+            p.settlements.forEach(id => nodeOwner[id] = { color, type: 'S' });
+            p.cities.forEach(id => nodeOwner[id] = { color, type: 'C' });
+            p.roads.forEach(key => edgeOwner[key] = color);
+        });
+    }
+
+    // 3. PLOT NODES (Corners)
     graph.nodes.forEach(n => {
-        const x = getX(n.x);
+        const x = getX(n.x); 
         const y = getY(n.y);
         
-        if (grid[y]) {
-            if (nodeOwner[n.id]) {
-                // Draw Player Piece
-                const { color, type } = nodeOwner[n.id];
-                // Bold text for buildings
-                grid[y][x] = `${color}\x1b[1m${type}${C.RESET}`; 
-            } else {
-                // Empty Node
-                grid[y][x] = `${C.NODE}.${C.RESET}`; 
-            }
+        if (nodeOwner[n.id]) {
+            // Draw Settlement/City
+            const { color, type } = nodeOwner[n.id];
+            safeSet(y, x, `${color}${type}${C.RESET}`);
+        } else {
+            // Draw Empty Node
+            safeSet(y, x, `${C.NODE}.${C.RESET}`);
         }
     });
 
-    // 3. PLOT EDGES (Roads)
+    // 4. PLOT EDGES (Roads)
     graph.edges.forEach(e => {
         const u = graph.nodes.find(n => n.id === e.u);
         const v = graph.nodes.find(n => n.id === e.v);
         
+        if (!u || !v) return;
+
         const ux = getX(u.x), uy = getY(u.y);
         const vx = getX(v.x), vy = getY(v.y);
+
         const midX = Math.floor((ux + vx) / 2);
         const midY = Math.floor((uy + vy) / 2);
         
@@ -95,83 +112,77 @@ const drawGame = (game) => {
         const edgeKey = u.id < v.id ? `${u.id}-${v.id}` : `${v.id}-${u.id}`;
         const roadColor = edgeOwner[edgeKey];
 
-        if (grid[midY]) {
-            if (roadColor) {
-                // DRAW COLORED ROAD
-                const cell = `${roadColor}\x1b[1m${char}${C.RESET}`;
-                grid[midY][midX] = cell;
-                
-                // Fill gaps for aesthetics if it's horizontal
-                if (char === '-') {
-                    grid[midY][midX-1] = `${roadColor}\x1b[1m-${C.RESET}`;
-                    grid[midY][midX+1] = `${roadColor}\x1b[1m-${C.RESET}`;
-                }
-            } else if (grid[midY][midX] === ' ') {
-                // Draw empty path (faint)
-                grid[midY][midX] = `${C.NODE}${char}${C.RESET}`;
+        if (roadColor) {
+            // Draw Colored Road
+            safeSet(midY, midX, `${roadColor}${char}${C.RESET}`);
+            // Fill gaps for horizontal roads
+            if (char === '-') {
+                safeSet(midY, midX - 1, `${roadColor}-${C.RESET}`);
+                safeSet(midY, midX + 1, `${roadColor}-${C.RESET}`);
+            }
+        } else {
+            // Draw Empty Path
+            if (grid[midY][midX] === ' ') {
+                safeSet(midY, midX, `${C.NODE}${char}${C.RESET}`);
             }
         }
     });
 
-    // 4. PLOT RESOURCES
+    // 5. PLOT RESOURCES (Hex Centers)
     graph.hexes.forEach(h => {
         const nodes = h.nodeIds.map(id => graph.nodes.find(n => n.id === id));
         const rawAvgX = nodes.reduce((sum, n) => sum + n.x, 0) / 6;
         const rawAvgY = nodes.reduce((sum, n) => sum + n.y, 0) / 6;
-        const cx = Math.floor(getX(rawAvgX));
-        const cy = Math.floor(getY(rawAvgY));
+        
+        const cx = getX(rawAvgX);
+        const cy = getY(rawAvgY);
 
         const meta = RES_MAP[h.resource] || { char: '???', color: C.RESET };
         const num = h.number !== null ? String(h.number).padStart(2, '0') : 'RB'; 
 
-        if (grid[cy]) {
-             const str = meta.char;
-             for(let i=0; i<str.length; i++) grid[cy][cx - 1 + i] = `${meta.color}${str[i]}${C.RESET}`;
+        // Draw Resource Name (e.g., "Cry")
+        const label = meta.char;
+        for (let i = 0; i < label.length; i++) {
+            safeSet(cy, cx - 1 + i, `${meta.color}${label[i]}${C.RESET}`);
         }
-        if (grid[cy + 1]) {
-             const str = num;
-             for(let i=0; i<str.length; i++) grid[cy + 1][cx - 1 + i] = `${C.RESET}${str[i]}${C.RESET}`;
+
+        // Draw Number Token
+        for (let i = 0; i < num.length; i++) {
+            safeSet(cy + 1, cx - 1 + i, `${C.RESET}${num[i]}${C.RESET}`);
         }
     });
 
-    // 5. RENDER
+    // 6. RENDER
     console.log(`\n${C.P1}Player 1 (Red)${C.RESET} | ${C.P2}Player 2 (Blue)${C.RESET}`);
     console.log(grid.map(row => row.join('')).join('\n'));
     console.log('\n');
 };
 
-
-// --- MOCK DATA FOR TESTING ---
-const runMockTest = () => {
+// --- SELF-TEST MODE ---
+if (require.main === module) {
+    console.log("🛠️  Running Visualization Self-Test...");
     const board = generateBoardGraph();
     
-    // Simulate Player 1 (Red) building a road and settlement
-    // Let's pick Node 10 and 11
-    const p1State = {
-        settlements: [10],
-        cities: [],
-        roads: ["10-11", "11-12"] // A road path
-    };
-
-    // Simulate Player 2 (Blue) building a City
-    // Pick Node 20
-    const p2State = {
-        settlements: [17],
-        cities: [20],
-        roads: ["20-21"]
-    };
-
-    const mockGame = {
+    // Create Dummy Game State
+    const dummyGame = {
         boardState: board,
-        playerStates: [p1State, p2State]
+        playerStates: [
+            { 
+                // Player 1
+                settlements: [board.nodes[10].id, board.nodes[15].id], 
+                cities: [board.nodes[20].id],
+                roads: [`${board.nodes[10].id}-${board.nodes[11].id}`] 
+            },
+            { 
+                // Player 2
+                settlements: [board.nodes[30].id], 
+                cities: [],
+                roads: [`${board.nodes[30].id}-${board.nodes[31].id}`, `${board.nodes[31].id}-${board.nodes[32].id}`] 
+            }
+        ]
     };
 
-    drawGame(mockGame);
-};
-
-// If run directly, show mock. If imported, export function.
-if (require.main === module) {
-    runMockTest();
+    drawGame(dummyGame);
 } else {
     module.exports = { drawGame };
 }

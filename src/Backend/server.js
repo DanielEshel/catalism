@@ -1,7 +1,8 @@
+// server.js
 const express = require("express");
 const http = require("http");
 const connectDB = require("./db");
-const jwt = require("jsonwebtoken"); // Import JWT
+const { protect } = require("./middleware/authMiddleware"); // <--- IMPORT HERE
 require("./models/Schemas");
 
 const GameLogic = require("./logic/gameLogic");
@@ -15,48 +16,71 @@ const server = http.createServer(app);
 app.use(express.json());
 connectDB();
 
-// --- AUTH MIDDLEWARE HELPER ---
-const protect = (req, res, next) => {
-  let token;
-  if (
-    req.headers.authorization &&
-    req.headers.authorization.startsWith("Bearer")
-  ) {
-    token = req.headers.authorization.split(" ")[1];
-  }
+// --- FOG OF WAR LOGIC
+const distributeGamePulse = (gameRaw) => {
+    // 1. Convert to Plain Object
+    const gameFull = gameRaw.toObject ? gameRaw.toObject() : gameRaw;
+    const gameId = gameFull._id.toString();
 
-  if (!token)
-    return res.status(401).json({ error: "Not authorized, no token" });
+    // 2. Loop through every player in the game state
+    gameFull.playerStates.forEach(targetPlayer => {
+        const targetId = targetPlayer.userId._id 
+            ? targetPlayer.userId._id.toString() 
+            : targetPlayer.userId.toString();
 
-  try {
-    const decoded = jwt.verify(token, UserLogic.JWT_SECRET);
-    req.user = { id: decoded.id }; // Attach user ID to request
-    next();
-  } catch (error) {
-    res.status(401).json({ error: "Not authorized, token failed" });
-  }
+        // 3. Deep Clone for this specific target
+        const personalizedGame = JSON.parse(JSON.stringify(gameFull));
+
+        // 4. Sanitize Opponents
+        personalizedGame.playerStates = personalizedGame.playerStates.map(p => {
+            const pId = p.userId._id ? p.userId._id.toString() : p.userId.toString();
+
+            if (pId !== targetId) {
+                // HIDE OPPONENT DATA
+                const resCount = Object.values(p.resources || {}).reduce((a,b)=>a+b, 0);
+                p.resources = null; 
+                p.resourceCount = resCount; 
+
+                const devCount = (p.developmentCards || []).length;
+                p.developmentCards = null; 
+                p.devCardCount = devCount; 
+            }
+            return p;
+        });
+
+        // 5. UNICAST via Controller
+        SocketController.emitToUser(targetId, 'game_pulse', personalizedGame);
+    });
 };
 
 const handleClientStream = async (socket, data) => {
   const userId = socket.data.userId;
   const { gameId, actionType, payload } = data;
 
-  // Debug Log: helps you see exactly what the frontend is sending
   console.log(`[SERVER] Action: ${actionType} from ${userId.slice(-4)}`);
 
   try {
-    // 1. SYNC REQUEST (Client asking for fresh state)
+    // SPECIAL CASE: Player Just Connected
+    if (actionType === "player_connected") {
+         // Logic passed from controller to trigger initial pulse + events
+         await distributeGamePulse(payload.game);
+         if (payload.event) {
+            SocketController.broadcastToRoom(gameId, "game_event", payload.event);
+         }
+         return;
+    }
+
+    // 1. SYNC REQUEST
     if (actionType === "sync_request") {
       const game = await GameLogic.getGameState(gameId);
-      // We use broadcastGameUpdate here purely to re-use the sanitization logic
-      // effectively sending a "Pulse" just to this one room/socket context if needed,
-      // or simply send directly:
-      await SocketController.broadcastGameUpdate(gameId, game);
+      // Send pulse ONLY to this user (Unicast)
+      // We can use the heavy distributor, or just craft one packet manually. 
+      // Using the distributor keeps logic consistent even if slightly heavier.
+      await distributeGamePulse(game); 
       return;
     }
 
-    // 2. PROCESS ACTION (The Core Logic)
-    // This runs the rules engine (Turn check, Resource check, etc.)
+    // 2. PROCESS ACTION
     const result = await ActionLogic.processAction(
       gameId,
       userId,
@@ -66,22 +90,17 @@ const handleClientStream = async (socket, data) => {
 
     console.log(`[SERVER] Action Valid. Broadcasting updates...`);
 
-    // 3. BROADCAST UPDATES
+    // 3. DISTRIBUTE UPDATES
     if (result.game) {
-      // A. GAME STATE (The "Pulse")
-      //  - Conceptually, this updates the board
-      // Uses 'broadcastGameUpdate' to loop through sockets and hide opponents' cards
-      await SocketController.broadcastGameUpdate(gameId, result.game);
+      // A. GAME STATE (Private/Sanitized)
+      distributeGamePulse(result.game); // <--- Using the new helper
 
-      // B. EVENT (Animation Triggers)
-      // Uses standard broadcast because events like "DICE_ROLLED" are public info
+      // B. EVENT (Public)
       if (result.event) {
-        console.log(`[SERVER] Event: ${result.event.type}`);
         SocketController.broadcastToRoom(gameId, "game_event", result.event);
       }
 
-      // C. LOGS (Chat History)
-      // Standard broadcast for the text log
+      // C. LOGS (Public)
       if (result.logMessage) {
         SocketController.broadcastToRoom(gameId, "action_log", {
           userId,
@@ -92,8 +111,6 @@ const handleClientStream = async (socket, data) => {
     }
   } catch (err) {
     console.error(`[SERVER] Error: ${err.message}`);
-
-    // Send the error ONLY to the player who caused it
     SocketController.sendError(socket, err.message);
   }
 };
@@ -101,62 +118,41 @@ const handleClientStream = async (socket, data) => {
 SocketController.init(server, handleClientStream);
 
 // --- ROUTES ---
-
-// 1. PUBLIC ROUTES (Auth)
+// (Keep your existing routes: register, login, create, join, list...)
 app.post("/api/users/register", async (req, res) => {
-  try {
-    const result = await UserLogic.registerUser(req.body);
-    // Result now contains { _id, displayName, token }
-    res.status(201).json(result);
-  } catch (e) {
-    res.status(400).json({ error: e.message });
-  }
+    try {
+      const result = await UserLogic.registerUser(req.body);
+      res.status(201).json(result);
+    } catch (e) { res.status(400).json({ error: e.message }); }
 });
-
+  
 app.post("/api/users/login", async (req, res) => {
-  try {
-    const result = await UserLogic.loginUser(req.body);
-    res.json(result);
-  } catch (e) {
-    res.status(401).json({ error: e.message });
-  }
+    try {
+      const result = await UserLogic.loginUser(req.body);
+      res.json(result);
+    } catch (e) { res.status(401).json({ error: e.message }); }
 });
-
-// 2. PROTECTED ROUTES (Require Token)
+  
 app.post("/api/games/create", protect, async (req, res) => {
-  try {
-    // We use req.user.id from the token, ignoring request body spoofing
-    const game = await GameLogic.createGame(req.user.id, req.body.maxPlayers);
-    res.status(201).json(game);
-  } catch (e) {
-    res.status(400).json({ error: e.message });
-  }
+    try {
+      const game = await GameLogic.createGame(req.user.id, req.body.maxPlayers);
+      res.status(201).json(game);
+    } catch (e) { res.status(400).json({ error: e.message }); }
 });
-
+  
 app.post("/api/games/join", protect, async (req, res) => {
-  try {
-    // Use req.user.id from token
-    const result = await GameLogic.requestJoinGame(
-      req.body.gameId,
-      req.user.id,
-    );
-    res.json({ message: "Slot reserved.", status: result.status });
-  } catch (e) {
-    res.status(400).json({ error: e.message });
-  }
+    try {
+      const result = await GameLogic.requestJoinGame(req.body.gameId, req.user.id);
+      res.json({ message: "Slot reserved.", status: result.status });
+    } catch (e) { res.status(400).json({ error: e.message }); }
 });
-
+  
 app.get("/api/games/list", protect, async (req, res) => {
-  try {
-    // Pass req.user.id to the logic
-    const result = await GameLogic.listOpenGames(req.user.id);
-    res.json(result); // Returns { games: [...], activeGameId: "..." }
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
+    try {
+      const result = await GameLogic.listOpenGames(req.user.id);
+      res.json(result); 
+    } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 const PORT = 3000;
-server.listen(PORT, () =>
-  console.log(`CATalism Server (Secure) running on port ${PORT}`),
-);
+server.listen(PORT, () => console.log(`CATalism Server running on port ${PORT}`));

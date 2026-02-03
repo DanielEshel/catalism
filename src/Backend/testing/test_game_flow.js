@@ -24,11 +24,13 @@ const connectSocket = (token, gameId, role) => {
             socket.emit("join_game", { gameId });
         });
 
+        // Listen for the personal update
         socket.on("game_pulse", (game) => {
-            // Only resolve once we have proof we are in the room
+            // Check if this pulse belongs to our game
             if (game._id === gameId) {
-                console.log(`      ✅ [${role}] Received Game State (Players: ${game.playerIds.length})`);
-                resolve(socket);
+                // We resolve the promise so the test knows connection is stable
+                // But we DON'T disconnect, we keep listening.
+                resolve(socket); 
             }
         });
 
@@ -36,11 +38,15 @@ const connectSocket = (token, gameId, role) => {
             console.log(`   ❌ [${role}] Connection Refused:`, err.message);
             reject(err);
         });
+
+        socket.on("error", (err) => {
+             console.log(`   ⚠️ [${role}] Logic Error:`, err);
+        });
     });
 };
 
 async function runFullTest() {
-    console.log(`${CLR.cyan}🚀 STARTING SECURE JWT TEST...${CLR.reset}\n`);
+    console.log(`${CLR.cyan}🚀 STARTING SECURE JWT TEST (2 PLAYERS)...${CLR.reset}\n`);
 
     try {
         // ==========================================
@@ -73,11 +79,12 @@ async function runFullTest() {
         const hostSocket = await connectSocket(hostToken, gameId, "HOST");
 
         // 🛑 LISTEN FOR START EVENT *BEFORE* P2 JOINS
+        // This ensures we don't miss the event while P2 is logging in
         const gameStartPromise = new Promise((resolve) => {
             hostSocket.on("game_event", (event) => {
                 if (event.type === 'GAME_STARTED') {
                     console.log(`${CLR.yellow}\n🎉 EVENT RECEIVED: GAME_STARTED${CLR.reset}`);
-                    console.log(`   First Turn: ${event.payload.firstTurn}`);
+                    console.log(`   First Turn User ID: ${event.payload.firstTurn}`);
                     resolve(true);
                 }
             });
@@ -92,7 +99,7 @@ async function runFullTest() {
         const p2Reg = await axios.post(`${API_URL}/users/register`, {
             displayName: "First_Mate", 
             email: `p2_${Date.now()}@cat.com`, 
-            password: "password123" // <--- FIX: Changed from "123" to "password123"
+            password: "password123"
         });
         const p2Token = p2Reg.data.token;
 
@@ -114,6 +121,8 @@ async function runFullTest() {
         await gameStartPromise;
 
         console.log(`\n${CLR.green}✅ SECURE INTEGRATION TEST PASSED!${CLR.reset}`);
+        
+        // Cleanup
         hostSocket.disconnect();
         p2Socket.disconnect();
         process.exit(0);
