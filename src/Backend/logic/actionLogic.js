@@ -397,49 +397,36 @@ const processAction = async (gameId, userId, actionType, payload) => {
     case "quit_game":
       if (player.hasQuit) throw new Error("Already quit.");
 
-      // A. Mark as Quit & Wipe Resources
+      // Immediate State Update
       player.hasQuit = true;
-      player.resources = {
-        carbonFiber: 0,
-        spaceCrystal: 0,
-        mice: 0,
-        catnip: 0,
-        cosmicMilk: 0,
-      };
-      player.developmentCards = [];
-      player.connected = false; // Effectively disconnect them too
-
-      logMessage = "ABANDONED THE MISSION (Quit Game).";
-
-      // B. Check Win Condition (Last Man Standing)
-      const activeSurvivors = game.playerStates.filter((p) => !p.hasQuit);
-
-      if (activeSurvivors.length === 1) {
-        // GAME OVER - The survivor wins!
-        const winner = activeSurvivors[0];
+      player.resources = { carbonFiber: 0, spaceCrystal: 0, mice: 0, catnip: 0, cosmicMilk: 0 };
+      player.victoryPoints = 0; // Reset score so they can't win while gone
+      
+      logMessage = `${userId} ABANDONED THE MISSION.`;
+      
+      // Check if Game Should End
+      const activeSurvivors = game.playerStates.filter(p => !p.hasQuit);
+      
+      if (activeSurvivors.length <= 1) {
         game.status = "finished";
+        const winner = activeSurvivors[0] || player; // Default to quitter if literally no one left
         event = {
           type: "GAME_OVER",
-          payload: {
-            winnerId: winner.userId,
-            score: winner.victoryPoints,
-            reason: "Last Pilot Standing",
-          },
+          payload: { winnerId: winner.userId, reason: "Last Pilot Standing" }
         };
-        logMessage += ` ${winner.userId} is the sole survivor!`;
-      } else {
-        // C. If it was the quitter's turn, pass it immediately
-        if (game.turn.toString() === userId) {
+      } else if (game.turn.toString() === userId) {
+        // Force Turn Pass safely
+        try {
           const nextId = getNextActivePlayer(game, userId);
-          game.turn = nextId;
-          game.diceRolled = false;
-
-          // Append event info so frontend knows turn changed
-          event = {
-            type: "TURN_CHANGED",
-            payload: { newTurnUserId: game.turn },
-          };
-          logMessage += " Turn passed automatically.";
+          if (nextId) {
+            game.turn = nextId;
+            game.diceRolled = false;
+            event = { type: "TURN_CHANGED", payload: { newTurnUserId: game.turn } };
+          }
+        } catch (e) {
+          console.error("Failed to pass turn during quit:", e);
+          // Fallback: just give it to the first active survivor
+          game.turn = activeSurvivors[0].userId;
         }
       }
       break;
