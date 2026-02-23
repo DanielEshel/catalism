@@ -40,15 +40,25 @@ input {
 .row { display: flex; justify-content: space-between; align-items: center; }
 
 /* ASCII BOARD */
+/* src/index.css */
+
 .board-container {
-  font-size: 14px;
-  line-height: 14px;
-  white-space: pre;
-  overflow: auto;
+  display: flex;
+  flex-direction: column;  /* <--- THIS FIXES THE SQUISH */
+  justify-content: center; 
+  align-items: center;     
   background: black;
   padding: 20px;
   border: 2px solid #444;
+  border-radius: 8px;
+  min-height: 500px;       
 }
+
+svg {
+  display: block;
+  margin: auto;            /* Standard SVG centering */
+}
+
 .cell { display: inline-block; width: 1ch; }
 
 /* COLORS */
@@ -59,3 +69,23 @@ input {
 .ansi-grey { color: #666; }
 .ansi-white { color: #fff; }
 .ansi-bold { font-weight: bold; }
+
+
+/* INTERACTIVE BOARD CSS */
+.clickable-node {
+    cursor: pointer;
+    transition: all 0.2s ease-in-out;
+}
+.clickable-node:hover {
+    fill: #00ff00; /* Glows green on hover */
+    stroke: #fff;
+    r: 10; /* Expands slightly */
+}
+
+.clickable-edge {
+    cursor: pointer;
+}
+.clickable-edge:hover {
+    stroke: rgba(0, 255, 0, 0.4); /* Shows a ghostly green lane on hover */
+}
+
