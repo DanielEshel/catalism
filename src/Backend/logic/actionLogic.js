@@ -355,7 +355,7 @@ const processAction = async (gameId, userId, actionType, payload) => {
         // Snake Draft Turn Logic
         let nextPlayerIndex;
         if (totalSettlements < game.maxPlayers) {
-          nextPlayerIndex = getNextActivePlayer(game, userId); // Round 1 (Forward)
+          nextPlayerIndex = game.playerIds.indexOf(getNextActivePlayer(game, userId)); // Round 1 (Forward)
         } else {
           nextPlayerIndex = game.maxPlayers * 2 - 1 - totalSettlements; // Round 2 (Reverse)
         }
