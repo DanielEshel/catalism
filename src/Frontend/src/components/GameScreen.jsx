@@ -46,7 +46,6 @@ export default function GameScreen({ user, gameId, setView, setActiveGameId }) {
   const handleNodeClick = (nodeId) => {
     if (!isMyTurn) return;
     
-    // If I already have a settlement here, upgrade it to a City
     if (myPlayerState.settlements.includes(nodeId)) {
         if (!isSetupPhase) {
             sendAction("build_city", { nodeId });
@@ -54,7 +53,6 @@ export default function GameScreen({ user, gameId, setView, setActiveGameId }) {
             alert("Cannot build cities during the setup phase!");
         }
     } else {
-        // Otherwise, try to build a new Settlement
         sendAction("build_settlement", { nodeId });
     }
   };
@@ -64,83 +62,116 @@ export default function GameScreen({ user, gameId, setView, setActiveGameId }) {
     sendAction("build_road", { u, v });
   };
 
-  return (
-    <div className="container">
-      <div className="row">
-        <h3>Sector: {game._id.slice(-6)}</h3>
-        <button onClick={handleQuit}>Quit Game</button>
-      </div>
+  // Find whose turn it currently is for the UI display
+  const currentTurnPlayerName = game.playerStates.find(p => (p.userId._id || p.userId) === game.turn)?.userId?.displayName || "Unknown";
 
-      {game.status === "lobby" ? (
-        <div className="panel" style={{ textAlign: "center", padding: "40px" }}>
-          <h2>⏳ WAITING FOR PILOTS...</h2>
-          <p style={{ fontSize: "20px" }}>{game.playerStates.length} / {game.maxPlayers} Players Joined</p>
+  if (game.status === "lobby") {
+    return (
+        <div className="container">
+            <div className="row">
+                <h3>Sector: {game._id.slice(-6)}</h3>
+                <button onClick={handleQuit}>Quit Game</button>
+            </div>
+            <div className="panel" style={{ textAlign: "center", padding: "40px" }}>
+                <h2>⏳ WAITING FOR PILOTS...</h2>
+                <p style={{ fontSize: "20px" }}>{game.playerStates.length} / {game.maxPlayers} Players Joined</p>
+            </div>
         </div>
-      ) : (
-        <div className="flex" style={{ alignItems: "flex-start" }}>
-          
-          {/* THE NEW INTERACTIVE BOARD */}
-          <div className="board-container" style={{ flex: 1 }}>
+    );
+  }
+
+  return (
+    <div style={{ display: "flex", height: "100vh", padding: "10px", gap: "10px", boxSizing: "border-box", maxWidth: "100vw" }}>
+      
+      {/* LEFT: MASSIVE BOARD AREA */}
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+        
+        {/* Header */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "5px" }}>
+            <h3 style={{ margin: 0 }}>Sector: {game._id.slice(-6)}</h3>
+            <button onClick={handleQuit} style={{ margin: 0, padding: "4px 10px" }}>Quit Game</button>
+        </div>
+        
+        {/* Scalable SVG Container (Padding reduced to make board bigger) */}
+        <div style={{ flex: 1, display: "flex", justifyContent: "center", alignItems: "center", background: "#05050a", border: "2px solid #333", borderRadius: "8px", padding: "5px", overflow: "hidden" }}>
             <GameBoard 
                 game={game} 
                 user={user} 
                 onNodeClick={handleNodeClick} 
                 onEdgeClick={handleEdgeClick} 
             />
-            <div style={{ textAlign: "center", marginTop: "10px", color: "#888", fontSize: "12px" }}>
-               💡 <i>Click empty nodes to build Settlements. Click your existing Settlements to upgrade to Cities. Click lines to build Roads.</i>
-            </div>
+        </div>
+
+        {/* Board Help Text */}
+        <div style={{ textAlign: "center", marginTop: "5px", color: "#666", fontSize: "13px" }}>
+            💡 <i>Click empty nodes to build Settlements. Click your existing Settlements to upgrade to Cities. Click lines to build Roads.</i>
+        </div>
+      </div>
+
+      {/* RIGHT: COMPACT SIDEBAR COLUMN (Width reduced to give board more space) */}
+      <div style={{ width: "260px", display: "flex", flexDirection: "column", gap: "10px", overflowY: "hidden" }}>
+        
+        {/* 1. Command Center (Actions) */}
+        <div className="panel" style={{ padding: "12px", margin: 0 }}>
+          <h4 style={{ margin: "0 0 10px 0" }}>Command Center</h4>
+          <div style={{ fontSize: "13px", marginBottom: "10px", color: "#ccc" }}>
+            Phase: <span className="ansi-yellow ansi-bold">{isSetupPhase ? "SETUP" : "OPERATIONS"}</span><br/>
+            Dice: {game.diceRolled ? <span className="ansi-yellow">Rolled</span> : "Waiting to Roll"}
           </div>
-
-          <div style={{ minWidth: "220px", marginLeft: "10px" }}>
-            <div className="panel">
-              <h4>🚀 Pilots</h4>
-              {game.playerStates.map((p) => {
-                const pId = p.userId._id || p.userId;
-                const pName = p.userId.displayName || "Unknown";
-                const isMe = pId === user?._id;
-
-                return (
-                  <div key={pId} style={{ marginBottom: "8px", padding: "6px", border: isMe ? "1px solid #00ff00" : "1px solid #444", background: game.turn === pId ? "#333" : "transparent", boxShadow: game.turn === pId ? "0 0 5px #555" : "none" }}>
-                    <div style={{ fontWeight: "bold", color: isMe ? "#00ff00" : "#ccc", display: "flex", justifyContent: "space-between" }}>
-                      <span>{pName} {isMe && "(You)"}</span>
-                      {game.turn === pId && <span style={{ color: "gold" }}>◀ TURN</span>}
-                    </div>
-                    <div style={{ fontSize: "12px", color: "#aaa" }}>VP: {p.victoryPoints} | Roads: {p.roads.length}</div>
-                    <div style={{ marginTop: "4px", borderTop: "1px dashed #444", paddingTop: "4px" }}>
-                      <ResourceList resources={p.resources} count={p.resourceCount} />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          <div style={{ minWidth: "250px", marginLeft: "10px" }}>
-            <div className="panel">
-              <h4>Status Report</h4>
-              <div style={{ marginBottom: "10px" }}>Phase: <span className="ansi-yellow ansi-bold">{isSetupPhase ? "SETUP (Free Build)" : "NORMAL OPERATIONS"}</span></div>
-              <div>Turn: {isMyTurn ? <span className="ansi-green ansi-bold">YOUR TURN</span> : "Waiting..."}</div>
-              <div>Dice: {game.diceRolled ? <span className="ansi-yellow">Rolled</span> : "Waiting to Roll"}</div>
-            </div>
-
-            <div className="panel">
-              <h4>Actions</h4>
-              <div className="flex">
-                <button onClick={() => sendAction("roll_dice")} disabled={!canRoll} style={{ opacity: !canRoll ? 0.5 : 1 }}>🎲 Roll</button>
-                <button onClick={() => sendAction("end_turn")} disabled={!isMyTurn} style={{ opacity: !isMyTurn ? 0.5 : 1 }}>End Turn</button>
-              </div>
-            </div>
-
-            <div className="panel">
-              <h4>Log</h4>
-              {logs.map((l, i) => (
-                <div key={i} style={{ fontSize: 12, color: "#999", marginBottom: '4px' }}>{l}</div>
-              ))}
-            </div>
+          <div className="flex" style={{ gap: "6px" }}>
+            <button onClick={() => sendAction("roll_dice")} disabled={!canRoll} style={{ flex: 1, margin: 0, padding: "6px", opacity: !canRoll ? 0.5 : 1 }}>🎲 Roll</button>
+            <button onClick={() => sendAction("end_turn")} disabled={!isMyTurn} style={{ flex: 1, margin: 0, padding: "6px", opacity: !isMyTurn ? 0.5 : 1 }}>End Turn</button>
           </div>
         </div>
-      )}
+
+        {/* 2. Comms Log (Flex 1 to stretch, pushing players to the bottom) */}
+        <div className="panel" style={{ padding: "12px", margin: 0, flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+          <h4 style={{ margin: "0 0 10px 0" }}>Comms Log</h4>
+          <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
+            {logs.map((l, i) => (
+              <div key={i} style={{ fontSize: 12, color: "#aaa", marginBottom: '6px', lineHeight: "1.3" }}>{l}</div>
+            ))}
+          </div>
+        </div>
+
+        {/* 3. Pilots & Turn Status (Bottom Anchored) */}
+        <div className="panel" style={{ padding: "12px", margin: 0 }}>
+          <h4 style={{ margin: "0 0 10px 0" }}>Pilots & Status</h4>
+          
+          {/* Turn Indicator Banner */}
+          <div style={{ marginBottom: "10px", padding: "8px", background: isMyTurn ? "#003300" : "#222", border: isMyTurn ? "1px solid #00ff00" : "1px solid #444", borderRadius: "4px", textAlign: "center", fontWeight: "bold", fontSize: "13px" }}>
+             {isMyTurn ? <span className="ansi-green">IT IS YOUR TURN</span> : <span style={{ color: "#aaa" }}>Waiting on {currentTurnPlayerName}...</span>}
+          </div>
+
+          {/* Player Cards */}
+          <div style={{ display: "flex", flexDirection: "column", gap: "6px", overflowY: "auto", maxHeight: "350px" }}>
+            {game.playerStates.map((p) => {
+              const pId = p.userId._id || p.userId;
+              const pName = p.userId.displayName || "Unknown";
+              const isMe = pId === user?._id;
+              const isTheirTurn = game.turn === pId;
+
+              return (
+                <div key={pId} style={{ padding: "8px", borderRadius: "4px", border: isTheirTurn ? "2px solid gold" : (isMe ? "1px solid #00ff00" : "1px solid #444"), background: isTheirTurn ? "#333" : "transparent" }}>
+                  <div style={{ fontWeight: "bold", color: isMe ? "#00ff00" : "#ccc", display: "flex", justifyContent: "space-between", marginBottom: "4px", fontSize: "13px" }}>
+                    <span>{pName} {isMe && "(You)"}</span>
+                    {isTheirTurn && <span style={{ color: "gold", fontSize: "11px" }}>◀ ACTIVE</span>}
+                  </div>
+
+                  <div style={{ fontSize: "11px", color: "#aaa" }}>
+                    VP: {p.victoryPoints} | Roads: {p.roads.length}
+                  </div>
+
+                  <div style={{ marginTop: "4px", borderTop: "1px solid #444", paddingTop: "4px" }}>
+                    <ResourceList resources={p.resources} count={p.resourceCount} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+        
+      </div>
     </div>
   );
 }
