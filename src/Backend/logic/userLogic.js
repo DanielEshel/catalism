@@ -1,6 +1,6 @@
 const { User } = require("../models/Schemas");
 const bcrypt = require("bcrypt");
-const jwt = require("jsonwebtoken"); // <--- THIS WAS LIKELY MISSING
+const jwt = require("jsonwebtoken");
 
 const JWT_SECRET = process.env.JWT_SECRET || "super_secret_kitten_key";
 const validateDisplayname = (name) => {
