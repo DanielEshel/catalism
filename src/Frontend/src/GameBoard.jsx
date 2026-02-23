@@ -179,7 +179,7 @@ export default function GameBoard({ game, user, onNodeClick, onEdgeClick }) {
               x={h.cx}
               y={h.cy + 4}
               textAnchor="middle"
-              fontSize="24"
+              fontSize="12"
               fontWeight="bold"
               fill={h.number === 6 || h.number === 8 ? "#d00" : "#111"}
             >
