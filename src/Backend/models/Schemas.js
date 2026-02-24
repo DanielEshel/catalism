@@ -53,6 +53,8 @@ const gameSchema = new mongoose.Schema({
     // NEW FLAG: Tracks if the dice have been rolled for the current turn
     diceRolled: { type: Boolean, default: false }, 
 
+    mustMoveRobber: { type: Boolean, default: false },
+    
     boardState: {
         hexes: [hexSchema],
         nodes: [nodeSchema],
