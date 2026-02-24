@@ -189,7 +189,6 @@ const processAction = async (gameId, userId, actionType, payload) => {
     0,
   );
   const isSetupPhase = totalSettlements < game.maxPlayers * 2 || totalRoads < game.maxPlayers * 2;
-  console.log(totalRoads, isSetupPhase);
 
   if (!isSetupPhase && ACTIONS_REQUIRING_ROLL.has(actionType)) {
     if (!game.diceRolled) throw new Error("You must roll the dice first!");
@@ -402,25 +401,9 @@ const processAction = async (gameId, userId, actionType, payload) => {
     case "quit_game":
       if (player.hasQuit) throw new Error("Already quit.");
 
-      // Immediate State Update
-      player.hasQuit = true;
-      player.resources = { carbonFiber: 0, spaceCrystal: 0, mice: 0, catnip: 0, cosmicMilk: 0 };
-      player.victoryPoints = 0; // Reset score so they can't win while gone
-      
-      logMessage = `${userId} ABANDONED THE MISSION.`;
-      
-      // Check if Game Should End
-      const activeSurvivors = game.playerStates.filter(p => !p.hasQuit);
-      
-      if (activeSurvivors.length <= 1) {
-        game.status = "finished";
-        const winner = activeSurvivors[0] || player; // Default to quitter if literally no one left
-        event = {
-          type: "GAME_OVER",
-          payload: { winnerId: winner.userId, reason: "Last Pilot Standing" }
-        };
-      } else if (game.turn.toString() === userId) {
-        // Force Turn Pass safely
+      // 1. Force Turn Pass safely
+      // IMPORTANT: We must do this BEFORE removing them from playerIds so the math still works!
+      if (game.turn.toString() === userId) {
         try {
           const nextId = getNextActivePlayer(game, userId);
           if (nextId) {
@@ -430,9 +413,32 @@ const processAction = async (gameId, userId, actionType, payload) => {
           }
         } catch (e) {
           console.error("Failed to pass turn during quit:", e);
-          // Fallback: just give it to the first active survivor
-          game.turn = activeSurvivors[0].userId;
         }
+      }
+
+      // 2. Immediate State Update
+      player.hasQuit = true;
+      player.connected = false; // Mark socket as disconnected
+      player.resources = { carbonFiber: 0, spaceCrystal: 0, mice: 0, catnip: 0, cosmicMilk: 0 };
+      player.victoryPoints = 0; 
+      
+      // 3. THE FIX: Completely remove them from active player IDs
+      // This stops LobbyScreen from automatically pulling them back in!
+      game.playerIds = game.playerIds.filter(id => id.toString() !== userId);
+      game.maxPlayers --;
+      
+      logMessage = `A pilot abandoned the mission.`;
+      
+      // 4. Check if Game Should End & Declare Winner
+      const activeSurvivors = game.playerStates.filter(p => !p.hasQuit);
+      
+      if (activeSurvivors.length <= 1) {
+        game.status = "finished";
+        const winner = activeSurvivors[0] || player; 
+        event = {
+          type: "GAME_OVER",
+          payload: { winnerId: winner.userId, reason: "Last Pilot Standing" }
+        };
       }
       break;
   }
@@ -445,6 +451,8 @@ const processAction = async (gameId, userId, actionType, payload) => {
     };
   }
 
+  game.markModified('playerIds');
+  game.markModified('playerStates');
   await game.save();
 
   // Audit Log
