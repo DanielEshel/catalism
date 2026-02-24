@@ -167,19 +167,34 @@ const getGameState = async (gameId) => {
 // UPDATED: Now accepts userId to find their specific game
 const listOpenGames = async (userId) => {
   // 1. Get all joinable games
-  const lobbyGames = await Game.find({
+  const rawGames = await Game.find({
     status: { $in: ["lobby", "in-progress"] },
   }).select("status playerStates maxPlayers startTime playerIds");
+
+  const validGames = [];
+
+  for (const g of rawGames) {
+    const activePlayers = g.playerStates.filter(p => !p.hasQuit);
+    
+    if (g.playerIds.length === 0 || activePlayers.length === 0) {
+        await Game.updateOne({ _id: g._id }, { status: "finished" });
+        continue; 
+    }
+
+    validGames.push(g);
+  }
 
   // 2. Check if THIS user is already in one of them
   let activeGameId = null;
   if (userId) {
-    const myGame = lobbyGames.find((g) => g.playerIds.includes(userId));
+    // ✨ THE FIX: Use .some() and .toString() to safely compare MongoDB ObjectIds to strings!
+    const myGame = validGames.find((g) => 
+       g.playerIds.some(id => id.toString() === userId.toString())
+    );
     if (myGame) activeGameId = myGame._id;
   }
 
-  // Return object with list AND the active ID
-  return { games: lobbyGames, activeGameId };
+  return { games: validGames, activeGameId };
 };
 
 module.exports = {
