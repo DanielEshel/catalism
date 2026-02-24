@@ -6,7 +6,8 @@ module.exports = ({ game, player, userId, payload, isSetupPhase, lastAction, tot
 
   // 1. VALIDATE PHASE-SPECIFIC RULES & RESOURCES
   if (isSetupPhase) {
-    if (lastAction?.userId.toString() === userId && lastAction?.actionType === "build_road") {
+    const isPivotTurn = totalSettlements === game.maxPlayers && player.settlements.length === 1;
+    if (!isPivotTurn && lastAction?.userId.toString() === userId && lastAction?.actionType === "build_road" ) {
       throw new Error("You must end your turn before building another settlement.");
     }
     const roundTarget = totalSettlements < game.maxPlayers ? 1 : 2;
