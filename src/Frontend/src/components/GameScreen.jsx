@@ -80,6 +80,27 @@ export default function GameScreen({ user, gameId, setView, setActiveGameId }) {
     );
   }
 
+  if (game.status === "finished") {
+    // Find who won (either the last survivor, or whoever has 10 points)
+    const winner = [...game.playerStates].sort((a, b) => b.victoryPoints - a.victoryPoints)[0];
+    const winnerName = winner?.userId?.displayName || "Unknown";
+
+    return (
+        <div className="container" style={{ marginTop: "10vh" }}>
+            <div className="panel" style={{ textAlign: "center", padding: "50px", border: "2px solid #00ff00" }}>
+                <h1 className="ansi-yellow" style={{ fontSize: "40px", margin: "0 0 20px 0" }}>🏆 SECTOR CLOSED 🏆</h1>
+                <h2 style={{ color: "#eee" }}>{winnerName} has won the game!</h2>
+                
+                <div style={{ marginTop: "40px" }}>
+                    <button onClick={handleQuit} style={{ fontSize: "18px", padding: "10px 20px" }}>
+                        Return to Lobby
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+  }
+
   return (
     <div style={{ display: "flex", height: "100vh", padding: "10px", gap: "10px", boxSizing: "border-box", maxWidth: "100vw" }}>
       
