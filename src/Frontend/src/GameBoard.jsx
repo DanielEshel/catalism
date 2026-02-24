@@ -2,9 +2,11 @@
 import React, { useMemo } from "react";
 import { checkSettlementSpacing, checkRoadAdjacency } from "./utils/gameRules";
 import { RES_IMAGES, PLAYER_COLORS } from "./constants/boardConstants.js";
-import HexLayer from "./components/Board/HexLayer";
-import EdgeLayer from "./components/Board/EdgeLayer";
-import NodeLayer from "./components/Board/NodeLayer";
+
+// ✨ Updated import to match your new filename
+import HexLayer from "./components/Board/HexLayer.jsx";
+import EdgeLayer from "./components/Board/EdgeLayer.jsx";
+import NodeLayer from "./components/Board/NodeLayer.jsx";
 
 export default function GameBoard({ game, user, onNodeClick, onEdgeClick, onHexClick }) {
   const robberHex = game?.boardState?.robberHex;
@@ -19,6 +21,7 @@ export default function GameBoard({ game, user, onNodeClick, onEdgeClick, onHexC
 
     const { nodes, edges, hexes } = game.boardState;
 
+    // --- COORDINATE SCALING ---
     const SCALE_X = 18;
     const SCALE_Y = 21;
     const PADDING = 30;
@@ -36,31 +39,43 @@ export default function GameBoard({ game, user, onNodeClick, onEdgeClick, onHexC
       nodeMap.set(n.id, { ...n, sx, sy });
     });
 
+    // --- OWNER MAPPING & SETUP TRACKING ---
     const nodeOwner = {};
     const edgeOwner = {};
-
     let totalSettlements = 0;
     let totalRoads = 0;
 
     game.playerStates.forEach((p) => {
-      const realIdx = game.playerIds.indexOf(p.userId._id || p.userId);
+      const pId = p.userId._id || p.userId;
+      const realIdx = game.playerIds.indexOf(pId);
       const color = PLAYER_COLORS[realIdx % 4] || "#ffffff";
 
       totalSettlements += p.settlements.length + p.cities.length;
       totalRoads += p.roads.length;
 
-      p.settlements.forEach((id) => (nodeOwner[id] = { color, type: "S", isMe: p.userId._id === user?._id }));
-      p.cities.forEach((id) => (nodeOwner[id] = { color, type: "C", isMe: p.userId._id === user?._id }));
+      p.settlements.forEach((id) => (nodeOwner[id] = { color, type: "S", isMe: pId === user?._id }));
+      p.cities.forEach((id) => (nodeOwner[id] = { color, type: "C", isMe: pId === user?._id }));
       p.roads.forEach((key) => (edgeOwner[key] = color));
     });
 
+    // --- SETUP PHASE LOGIC ---
     const isSetupPhase = totalSettlements < game.maxPlayers * 2 || totalRoads < game.maxPlayers * 2;
     const isMyTurn = game.turn === user?._id;
     const isRobberTime = isMyTurn && game.mustMoveRobber;
     const myPlayerState = game.playerStates.find((p) => (p.userId._id || p.userId) === user?._id);
 
+    // Enforce alternating S -> R during setup
+    const needsSettlement = isSetupPhase 
+        ? (myPlayerState?.settlements.length === myPlayerState?.roads.length)
+        : true; 
+
+    const needsRoad = isSetupPhase
+        ? (myPlayerState?.settlements.length > myPlayerState?.roads.length)
+        : true;
+
+    // --- VALIDATION: NODES (Settlements) ---
     const validNodes = new Set();
-    if (isMyTurn && !isRobberTime && myPlayerState) {
+    if (isMyTurn && !isRobberTime && myPlayerState && needsSettlement) {
         nodes.forEach(n => {
             if (nodeOwner[n.id]) return;
             const spacingOk = checkSettlementSpacing(n.id, game);
@@ -69,32 +84,31 @@ export default function GameBoard({ game, user, onNodeClick, onEdgeClick, onHexC
         });
     }
 
+    // --- VALIDATION: EDGES (Roads) ---
+    const edgeData = edges.map((e) => {
+      const u = nodeMap.get(e.u);
+      const v = nodeMap.get(e.v);
+      const edgeKey = e.u < e.v ? `${e.u}-${v.id}` : `${e.v}-${u.id}`; // Simple key gen
+      
+      let isValid = false;
+      if (isMyTurn && !isRobberTime && myPlayerState && !edgeOwner[edgeKey] && needsRoad) {
+          if (isSetupPhase) {
+              // Rule: Road must be adjacent to the settlement just placed
+              const lastSettlement = myPlayerState.settlements[myPlayerState.settlements.length - 1];
+              if ([e.u, e.v].includes(lastSettlement)) isValid = true;
+          } else {
+              if (checkRoadAdjacency(e.u, e.v, myPlayerState)) isValid = true;
+          }
+      }
+      return { u, v, color: edgeOwner[edgeKey], isValid };
+    });
+
     const hexData = hexes.map((h) => {
       const hexNodes = h.nodeIds.map((id) => nodeMap.get(id));
       const points = hexNodes.map((n) => `${n.sx},${n.sy}`).join(" ");
       const cx = hexNodes.reduce((sum, n) => sum + n.sx, 0) / 6;
       const cy = hexNodes.reduce((sum, n) => sum + n.sy, 0) / 6;
       return { ...h, points, cx, cy };
-    });
-
-    const edgeData = edges.map((e) => {
-      const u = nodeMap.get(e.u);
-      const v = nodeMap.get(e.v);
-      const edgeKey = e.u < e.v ? `${e.u}-${e.v}` : `${e.v}-${e.u}`;
-      
-      let isValid = false;
-      if (isMyTurn && !isRobberTime && myPlayerState && !edgeOwner[edgeKey]) {
-          if (isSetupPhase) {
-              if (myPlayerState.settlements.length > myPlayerState.roads.length) {
-                  const lastSettlement = myPlayerState.settlements[myPlayerState.settlements.length - 1];
-                  if ([e.u, e.v].includes(lastSettlement)) isValid = true;
-              }
-          } else {
-              if (checkRoadAdjacency(e.u, e.v, myPlayerState)) isValid = true;
-          }
-      }
-
-      return { u, v, color: edgeOwner[edgeKey], isValid };
     });
 
     const width = (maxX - minX) * SCALE_X + PADDING * 2;
@@ -126,9 +140,24 @@ export default function GameBoard({ game, user, onNodeClick, onEdgeClick, onHexC
         })}
       </defs>
 
-      <HexLayer hexData={renderData.hexData} robberHex={robberHex} onHexClick={onHexClick} />
-      <EdgeLayer edgeData={renderData.edgeData} onEdgeClick={onEdgeClick} />
-      <NodeLayer nodeMap={renderData.nodeMap} nodeOwner={renderData.nodeOwner} validNodes={renderData.validNodes} onNodeClick={onNodeClick} />
+      {/* ✨ Usage updated to HexLayer */}
+      <HexLayer 
+        hexData={renderData.hexData} 
+        robberHex={robberHex} 
+        onHexClick={onHexClick} 
+      />
+      
+      <EdgeLayer 
+        edgeData={renderData.edgeData} 
+        onEdgeClick={onEdgeClick} 
+      />
+      
+      <NodeLayer 
+        nodeMap={renderData.nodeMap} 
+        nodeOwner={renderData.nodeOwner} 
+        validNodes={renderData.validNodes} 
+        onNodeClick={onNodeClick} 
+      />
     </svg>
   );
 }
