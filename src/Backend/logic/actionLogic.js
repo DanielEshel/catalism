@@ -188,8 +188,8 @@ const processAction = async (gameId, userId, actionType, payload) => {
     (sum, p) => sum + p.roads.length ,
     0,
   );
-  
-  const isSetupPhase = totalSettlements < game.maxPlayers * 2 && totalRoads < game.maxPlayers * 2;
+  const isSetupPhase = totalSettlements < game.maxPlayers * 2 || totalRoads < game.maxPlayers * 2;
+  console.log(totalRoads, isSetupPhase);
 
   if (!isSetupPhase && ACTIONS_REQUIRING_ROLL.has(actionType)) {
     if (!game.diceRolled) throw new Error("You must roll the dice first!");
@@ -220,7 +220,7 @@ const processAction = async (gameId, userId, actionType, payload) => {
       checkAndConsumeResources(player, "SMALL_CAT", isSetupPhase);
       const sNodeId = Number(payload.nodeId);
 
-      // 🛑 SETUP VALIDATION
+      //  SETUP VALIDATION
       if (isSetupPhase) {
         // A. FORCE END TURN
         // If the last thing you did was build a road, you are done for this turn.
