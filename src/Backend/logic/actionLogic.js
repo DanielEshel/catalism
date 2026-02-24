@@ -184,7 +184,12 @@ const processAction = async (gameId, userId, actionType, payload) => {
     (sum, p) => sum + p.settlements.length + p.cities.length,
     0,
   );
-  const isSetupPhase = totalSettlements < game.maxPlayers * 2;
+  let totalRoads = game.playerStates.reduce(
+    (sum, p) => sum + p.roads.length ,
+    0,
+  );
+  
+  const isSetupPhase = totalSettlements < game.maxPlayers * 2 && totalRoads < game.maxPlayers * 2;
 
   if (!isSetupPhase && ACTIONS_REQUIRING_ROLL.has(actionType)) {
     if (!game.diceRolled) throw new Error("You must roll the dice first!");
@@ -273,7 +278,7 @@ const processAction = async (gameId, userId, actionType, payload) => {
       const rV = Number(payload.v);
       const roadKey = getEdgeKey(rU, rV);
 
-      // 🛑 SETUP VALIDATION
+      //  SETUP VALIDATION
       if (isSetupPhase) {
         // A. ROUND TARGET CHECK
         const roundTarget = totalSettlements < game.maxPlayers ? 1 : 2;
