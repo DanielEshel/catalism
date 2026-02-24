@@ -29,8 +29,16 @@ export default function LobbyScreen({ user, setView, setActiveGameId, logout }) 
       
       // If we found an active game, we need to switch to the GameScreen.
       if (isMounted && data && data.activeGameId) {
-        // setTimeout defers the parent state update to the end of the event loop.
-        // This completely prevents the "synchronous state update" rendering error!
+        // ✨ THE FIX: Check if the server is trying to pull us back into the game we JUST quit
+        const recentlyQuitId = sessionStorage.getItem("justQuitGameId");
+
+        if (data.activeGameId === recentlyQuitId) {
+           console.log("Ignoring stale auto-join for recently quit game.");
+           // Clear the tag so they can manually rejoin later if they want to
+           sessionStorage.removeItem("justQuitGameId"); 
+           return; 
+        }
+
         setTimeout(() => {
           if (isMounted) {
             setActiveGameId(data.activeGameId);
@@ -52,8 +60,13 @@ export default function LobbyScreen({ user, setView, setActiveGameId, logout }) 
 
   const createGame = async () => {
     try {
-      await comms.createGame(Number(newGamePlayers));
-      fetchLobby();
+      // 1. Capture the response from the server (which contains the new game's data)
+      const newGame = await comms.createGame(Number(newGamePlayers));
+      
+      // ✨ THE FIX: Instantly set the active game ID to the one we just created and switch views!
+      setActiveGameId(newGame._id);
+      setView("game");
+
     } catch (e) {
       alert(e.response?.data?.error || "Create Failed");
     }
