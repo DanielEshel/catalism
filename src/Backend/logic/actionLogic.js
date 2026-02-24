@@ -401,44 +401,55 @@ const processAction = async (gameId, userId, actionType, payload) => {
     case "quit_game":
       if (player.hasQuit) throw new Error("Already quit.");
 
-      // 1. Force Turn Pass safely
-      // IMPORTANT: We must do this BEFORE removing them from playerIds so the math still works!
-      if (game.turn.toString() === userId) {
-        try {
-          const nextId = getNextActivePlayer(game, userId);
-          if (nextId) {
-            game.turn = nextId;
-            game.diceRolled = false;
-            event = { type: "TURN_CHANGED", payload: { newTurnUserId: game.turn } };
-          }
-        } catch (e) {
-          console.error("Failed to pass turn during quit:", e);
-        }
-      }
+      if (game.status === "lobby") {
+        // --- LOBBY PHASE QUIT ---
+        // Completely erase them from the game record
+        game.playerIds = game.playerIds.filter(id => id.toString() !== userId);
+        game.playerStates = game.playerStates.filter(p => p.userId.toString() !== userId);
+        
+        logMessage = `A pilot left the lobby.`;
 
-      // 2. Immediate State Update
-      player.hasQuit = true;
-      player.connected = false; // Mark socket as disconnected
-      player.resources = { carbonFiber: 0, spaceCrystal: 0, mice: 0, catnip: 0, cosmicMilk: 0 };
-      player.victoryPoints = 0; 
-      
-      // 3. THE FIX: Completely remove them from active player IDs
-      // This stops LobbyScreen from automatically pulling them back in!
-      game.playerIds = game.playerIds.filter(id => id.toString() !== userId);
-      game.maxPlayers --;
-      
-      logMessage = `A pilot abandoned the mission.`;
-      
-      // 4. Check if Game Should End & Declare Winner
-      const activeSurvivors = game.playerStates.filter(p => !p.hasQuit);
-      
-      if (activeSurvivors.length <= 1) {
-        game.status = "finished";
-        const winner = activeSurvivors[0] || player; 
-        event = {
-          type: "GAME_OVER",
-          payload: { winnerId: winner.userId, reason: "Last Pilot Standing" }
-        };
+        // Shut down the lobby if everyone leaves
+        if (game.playerIds.length === 0) {
+          game.status = "finished";
+          logMessage = "Lobby is empty. Sector closed.";
+        }
+      } else {
+        // --- IN-PROGRESS PHASE QUIT ---
+        // 1. Immediate State Update (Keep their ghost structures on the board)
+        player.hasQuit = true;
+        player.resources = { carbonFiber: 0, spaceCrystal: 0, mice: 0, catnip: 0, cosmicMilk: 0 };
+        player.victoryPoints = 0; 
+        
+        // 2. Remove them from playerIds so they skip turns and can't auto-rejoin
+        game.playerIds = game.playerIds.filter(id => id.toString() !== userId);
+        
+        logMessage = `A pilot abandoned the mission.`;
+        
+        // 3. Check if Game Should End
+        const activeSurvivors = game.playerStates.filter(p => !p.hasQuit);
+        
+        if (activeSurvivors.length <= 1) {
+          game.status = "finished";
+          const winner = activeSurvivors[0] || player; 
+          event = {
+            type: "GAME_OVER",
+            payload: { winnerId: winner.userId, reason: "Last Pilot Standing" }
+          };
+        } else if (game.turn && game.turn.toString() === userId) {
+          // 4. Force Turn Pass safely
+          try {
+            const nextId = getNextActivePlayer(game, userId);
+            if (nextId) {
+              game.turn = nextId;
+              game.diceRolled = false;
+              event = { type: "TURN_CHANGED", payload: { newTurnUserId: game.turn } };
+            }
+          } catch (e) {
+            console.error("Failed to pass turn during quit:", e);
+            game.turn = activeSurvivors[0].userId;
+          }
+        }
       }
       break;
   }
