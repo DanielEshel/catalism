@@ -29,6 +29,7 @@ export default function GameScreen({ user, gameId, setView, setActiveGameId }) {
 
   const handleQuit = () => {
     leaveGame();
+    sessionStorage.setItem("justQuitGameId", gameId);
     setActiveGameId(null);
     setView("lobby");
   };
