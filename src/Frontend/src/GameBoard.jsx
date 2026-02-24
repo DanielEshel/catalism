@@ -23,7 +23,8 @@ const RES_COLORS = {
 
 const PLAYER_COLORS = ["#ff5555", "#5555ff", "#55ff55", "#ffff55"];
 
-export default function GameBoard({ game, user, onNodeClick, onEdgeClick }) {
+// ✨ ADDED onHexClick back into the props for the robber
+export default function GameBoard({ game, user, onNodeClick, onEdgeClick, onHexClick }) {
   const robberHex = game?.boardState?.robberHex;
 
   const { renderData, viewBox } = useMemo(() => {
@@ -42,8 +43,6 @@ export default function GameBoard({ game, user, onNodeClick, onEdgeClick }) {
     const { nodes, edges, hexes } = game.boardState;
 
     // --- SCALE ADJUSTMENT ---
-    // Reduced SCALE_X and SCALE_Y to shrink the board size.
-    // Reduced PADDING to bring the board closer to the edges.
     const SCALE_X = 18;
     const SCALE_Y = 21;
     const PADDING = 30;
@@ -165,7 +164,18 @@ export default function GameBoard({ game, user, onNodeClick, onEdgeClick }) {
           : RES_COLORS[h.resource] || "#333";
 
         return (
-          <g key={h.id}>
+          <g 
+            key={h.id}
+            // ✨ THE FIX: Hexagon click handler (for Robber logic)
+            onClick={(event) => {
+              if (onHexClick) {
+                event.stopPropagation();
+                onHexClick(h.id);
+              }
+            }}
+            className={onHexClick ? "clickable-hex" : ""}
+            style={{ cursor: onHexClick ? "pointer" : "default" }}
+          >
             <polygon
               points={h.points}
               fill={fillUrl}
@@ -214,7 +224,12 @@ export default function GameBoard({ game, user, onNodeClick, onEdgeClick }) {
             stroke="transparent"
             strokeWidth="15"
             className="clickable-edge"
-            onClick={() => onEdgeClick(e.u.id, e.v.id)}
+            style={{ cursor: "pointer" }}
+            // ✨ THE FIX: Passing the event back for edges
+            onClick={(event) => {
+              event.stopPropagation();
+              if (onEdgeClick) onEdgeClick(e.u.id, e.v.id, event);
+            }}
           />
         </g>
       ))}
@@ -236,7 +251,12 @@ export default function GameBoard({ game, user, onNodeClick, onEdgeClick }) {
                 stroke="#fff"
                 strokeWidth="2"
                 className={owner.isMe ? "clickable-node" : ""}
-                onClick={() => (owner.isMe ? onNodeClick(n.id) : null)}
+                style={{ cursor: owner.isMe ? "pointer" : "default" }}
+                // ✨ THE FIX: Passing the event back for Cities
+                onClick={(event) => {
+                  event.stopPropagation();
+                  if (owner.isMe && onNodeClick) onNodeClick(n.id, event);
+                }}
               />
             );
           } else {
@@ -250,7 +270,12 @@ export default function GameBoard({ game, user, onNodeClick, onEdgeClick }) {
                 stroke="#fff"
                 strokeWidth="2"
                 className={owner.isMe ? "clickable-node" : ""}
-                onClick={() => (owner.isMe ? onNodeClick(n.id) : null)}
+                style={{ cursor: owner.isMe ? "pointer" : "default" }}
+                // ✨ THE FIX: Passing the event back for Settlements
+                onClick={(event) => {
+                  event.stopPropagation();
+                  if (owner.isMe && onNodeClick) onNodeClick(n.id, event);
+                }}
               />
             );
           }
@@ -265,7 +290,12 @@ export default function GameBoard({ game, user, onNodeClick, onEdgeClick }) {
               stroke="#555"
               strokeWidth="1"
               className="clickable-node"
-              onClick={() => onNodeClick(n.id)}
+              style={{ cursor: "pointer" }}
+              // ✨ THE FIX: Passing the event back for empty Nodes
+              onClick={(event) => {
+                event.stopPropagation();
+                if (onNodeClick) onNodeClick(n.id, event);
+              }}
             />
           );
         }
