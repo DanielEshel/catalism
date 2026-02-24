@@ -1,6 +1,9 @@
 // src/GameBoard.jsx
 import React, { useMemo } from "react";
 
+// ✨ Import the rules to power the visual highlights
+import { checkSettlementSpacing, checkRoadAdjacency } from "./utils/gameRules"; 
+
 import resCarbonFiber from "./assets/resouces/res_carbon_fiber.png";
 import resCatnip from "./assets/resouces/res_catnip.png";
 import resCosmicMilk from "./assets/resouces/res_cosmic_milk.png";
@@ -35,6 +38,7 @@ export default function GameBoard({ game, user, onNodeClick, onEdgeClick, onHexC
           hexData: [],
           edgeData: [],
           nodeOwner: {},
+          validNodes: new Set(), // ✨ Added to initial state
         },
         viewBox: "0 0 100 100",
       };
@@ -69,9 +73,16 @@ export default function GameBoard({ game, user, onNodeClick, onEdgeClick, onHexC
     const nodeOwner = {};
     const edgeOwner = {};
 
+    // ✨ Track totals for Setup Phase calculation
+    let totalSettlements = 0;
+    let totalRoads = 0;
+
     game.playerStates.forEach((p) => {
       const realIdx = game.playerIds.indexOf(p.userId._id || p.userId);
       const color = PLAYER_COLORS[realIdx % 4] || "#ffffff";
+
+      totalSettlements += p.settlements.length + p.cities.length;
+      totalRoads += p.roads.length;
 
       p.settlements.forEach(
         (id) =>
@@ -92,6 +103,22 @@ export default function GameBoard({ game, user, onNodeClick, onEdgeClick, onHexC
       p.roads.forEach((key) => (edgeOwner[key] = color));
     });
 
+    // ✨ LOGIC: Determine which spots are valid to build on right now
+    const isSetupPhase = totalSettlements < game.maxPlayers * 2 || totalRoads < game.maxPlayers * 2;
+    const isMyTurn = game.turn === user?._id;
+    const isRobberTime = isMyTurn && game.mustMoveRobber;
+    const myPlayerState = game.playerStates.find((p) => (p.userId._id || p.userId) === user?._id);
+
+    const validNodes = new Set();
+    if (isMyTurn && !isRobberTime && myPlayerState) {
+        nodes.forEach(n => {
+            if (nodeOwner[n.id]) return; // Skip if already built on
+            const spacingOk = checkSettlementSpacing(n.id, game);
+            const networkOk = isSetupPhase || myPlayerState.roads.some(r => r.split("-").map(Number).includes(n.id));
+            if (spacingOk && networkOk) validNodes.add(n.id);
+        });
+    }
+
     const hexData = hexes.map((h) => {
       const hexNodes = h.nodeIds.map((id) => nodeMap.get(id));
       const points = hexNodes.map((n) => `${n.sx},${n.sy}`).join(" ");
@@ -106,14 +133,28 @@ export default function GameBoard({ game, user, onNodeClick, onEdgeClick, onHexC
       const u = nodeMap.get(e.u);
       const v = nodeMap.get(e.v);
       const edgeKey = e.u < e.v ? `${e.u}-${e.v}` : `${e.v}-${e.u}`;
-      return { u, v, color: edgeOwner[edgeKey] };
+      
+      // ✨ LOGIC: Validate edges for dashed-green lines
+      let isValid = false;
+      if (isMyTurn && !isRobberTime && myPlayerState && !edgeOwner[edgeKey]) {
+          if (isSetupPhase) {
+              if (myPlayerState.settlements.length > myPlayerState.roads.length) {
+                  const lastSettlement = myPlayerState.settlements[myPlayerState.settlements.length - 1];
+                  if ([e.u, e.v].includes(lastSettlement)) isValid = true;
+              }
+          } else {
+              if (checkRoadAdjacency(e.u, e.v, myPlayerState)) isValid = true;
+          }
+      }
+
+      return { u, v, color: edgeOwner[edgeKey], isValid }; // Added isValid to return
     });
 
     const width = (maxX - minX) * SCALE_X + PADDING * 2;
     const height = (maxY - minY) * SCALE_Y + PADDING * 2;
 
     return {
-      renderData: { nodeMap, hexData, edgeData, nodeOwner },
+      renderData: { nodeMap, hexData, edgeData, nodeOwner, validNodes },
       viewBox: `0 0 ${width} ${height}`,
     };
   }, [game, user]);
@@ -166,7 +207,6 @@ export default function GameBoard({ game, user, onNodeClick, onEdgeClick, onHexC
         return (
           <g 
             key={h.id}
-            // ✨ THE FIX: Hexagon click handler (for Robber logic)
             onClick={(event) => {
               if (onHexClick) {
                 event.stopPropagation();
@@ -213,8 +253,9 @@ export default function GameBoard({ game, user, onNodeClick, onEdgeClick, onHexC
             y1={e.u.sy}
             x2={e.v.sx}
             y2={e.v.sy}
-            stroke={e.color || "#444"}
-            strokeWidth={e.color ? "6" : "2"}
+            stroke={e.color || (e.isValid ? "rgba(0, 255, 0, 0.5)" : "#444")}  // ✨ Highlight valid edges
+            strokeWidth={e.color ? "6" : (e.isValid ? "4" : "2")}
+            strokeDasharray={e.isValid && !e.color ? "4 4" : "none"} // ✨ Dashed effect
           />
           <line
             x1={e.u.sx}
@@ -225,7 +266,6 @@ export default function GameBoard({ game, user, onNodeClick, onEdgeClick, onHexC
             strokeWidth="15"
             className="clickable-edge"
             style={{ cursor: "pointer" }}
-            // ✨ THE FIX: Passing the event back for edges
             onClick={(event) => {
               event.stopPropagation();
               if (onEdgeClick) onEdgeClick(e.u.id, e.v.id, event);
@@ -237,6 +277,7 @@ export default function GameBoard({ game, user, onNodeClick, onEdgeClick, onHexC
       {/* 3. RENDER NODES (SETTLEMENTS/CITIES) */}
       {Array.from(renderData.nodeMap.values()).map((n) => {
         const owner = renderData.nodeOwner[n.id];
+        const isValidEmpty = renderData.validNodes.has(n.id); // ✨ Check if this node is valid to build on
 
         if (owner) {
           if (owner.type === "C") {
@@ -252,7 +293,6 @@ export default function GameBoard({ game, user, onNodeClick, onEdgeClick, onHexC
                 strokeWidth="2"
                 className={owner.isMe ? "clickable-node" : ""}
                 style={{ cursor: owner.isMe ? "pointer" : "default" }}
-                // ✨ THE FIX: Passing the event back for Cities
                 onClick={(event) => {
                   event.stopPropagation();
                   if (owner.isMe && onNodeClick) onNodeClick(n.id, event);
@@ -271,7 +311,6 @@ export default function GameBoard({ game, user, onNodeClick, onEdgeClick, onHexC
                 strokeWidth="2"
                 className={owner.isMe ? "clickable-node" : ""}
                 style={{ cursor: owner.isMe ? "pointer" : "default" }}
-                // ✨ THE FIX: Passing the event back for Settlements
                 onClick={(event) => {
                   event.stopPropagation();
                   if (owner.isMe && onNodeClick) onNodeClick(n.id, event);
@@ -285,13 +324,12 @@ export default function GameBoard({ game, user, onNodeClick, onEdgeClick, onHexC
               key={n.id}
               cx={n.sx}
               cy={n.sy}
-              r="6"
-              fill="#222"
-              stroke="#555"
-              strokeWidth="1"
+              r={isValidEmpty ? "10" : "6"} // ✨ Pulse larger if valid
+              fill={isValidEmpty ? "rgba(0, 255, 0, 0.4)" : "#222"} // ✨ Green fill
+              stroke={isValidEmpty ? "#00ff00" : "#555"} // ✨ Green border
+              strokeWidth={isValidEmpty ? "2" : "1"}
               className="clickable-node"
-              style={{ cursor: "pointer" }}
-              // ✨ THE FIX: Passing the event back for empty Nodes
+              style={{ cursor: "pointer", transition: "all 0.2s" }}
               onClick={(event) => {
                 event.stopPropagation();
                 if (onNodeClick) onNodeClick(n.id, event);

@@ -2,19 +2,15 @@
 import React, { useState } from "react";
 import GameBoard from "../GameBoard";
 import useGameState from "../hooks/useGameState";
-
-// ✨ Import our shared, isomorphic game rules!
 import { hasEnoughResources, checkSettlementSpacing, checkRoadAdjacency } from "../utils/gameRules";
 
-
-// Small UI Helper for displaying the player's resource hand
 const ResourceList = ({ resources, count }) => {
     if (!resources) {
       if (!count || count === 0) return <span style={{ fontSize: "10px", color: "#666" }}>Empty Hand</span>;
       return <span style={{ fontSize: "11px", color: "#888", fontStyle: "italic" }}>Hidden Hand ({count}) 🎴</span>;
     }
     const map = { carbonFiber: "Fiber", spaceCrystal: "Crystal", catnip: "Nip", mice: "Mice", cosmicMilk: "Milk" };
-    const items = Object.entries(resources).filter(([, amt]) => amt > 0);
+    const items = Object.entries(resources).filter(([_, amt]) => amt > 0);
     if (items.length === 0) return <span style={{ fontSize: "10px", color: "#666" }}>Empty Hand</span>;
     return (
       <div style={{ fontSize: "11px", display: "flex", flexWrap: "wrap", gap: "4px" }}>
@@ -40,7 +36,6 @@ export default function GameScreen({ user, gameId, setView, setActiveGameId }) {
 
   if (!game) return <div className="container"><h2>Loading Sector Data...</h2></div>;
 
-  // --- LOBBY WAITING SCREEN ---
   if (game.status === "lobby") {
     return (
         <div className="container">
@@ -56,7 +51,6 @@ export default function GameScreen({ user, gameId, setView, setActiveGameId }) {
     );
   }
 
-  // --- GAME OVER SCREEN ---
   if (game.status === "finished") {
     const winner = [...game.playerStates].sort((a, b) => b.victoryPoints - a.victoryPoints)[0];
     const winnerName = winner?.userId?.displayName || "Unknown";
@@ -73,7 +67,6 @@ export default function GameScreen({ user, gameId, setView, setActiveGameId }) {
     );
   }
 
-  // --- GAME STATE VARIABLES ---
   const isMyTurn = game?.turn === user?._id;
   const myPlayerState = game.playerStates.find(p => (p.userId._id || p.userId) === user?._id);
   const totalSettlements = game.playerStates.reduce((sum, p) => sum + p.settlements.length + p.cities.length, 0);
@@ -83,7 +76,35 @@ export default function GameScreen({ user, gameId, setView, setActiveGameId }) {
   const canRoll = isMyTurn && !isSetupPhase && !game.diceRolled;
   const isRobberTime = isMyTurn && game.mustMoveRobber;
 
-  // --- CLICK HANDLERS (Opens menu instead of auto-building) ---
+  // --- MENU DISPLAY LOGIC (Determine if options should be greyed out) ---
+  let canBuildSettlement = false;
+  let canBuildCity = false;
+  let canBuildRoad = false;
+
+  if (buildMenu && myPlayerState) {
+      if (buildMenu.type === 'node') {
+          canBuildSettlement = checkSettlementSpacing(buildMenu.data.nodeId, game) && 
+              (isSetupPhase || myPlayerState.roads.some(r => r.split("-").map(Number).includes(buildMenu.data.nodeId)));
+          
+          canBuildCity = myPlayerState.settlements.includes(buildMenu.data.nodeId) && !isSetupPhase;
+      } else if (buildMenu.type === 'edge') {
+          const { u, v } = buildMenu.data;
+          const edgeKey = u < v ? `${u}-${v}` : `${v}-${u}`;
+          const isOccupied = game.playerStates.some(p => p.roads.includes(edgeKey));
+          
+          if (!isOccupied) {
+              if (isSetupPhase) {
+                  if (myPlayerState.settlements.length > myPlayerState.roads.length) {
+                      const lastSettlement = myPlayerState.settlements[myPlayerState.settlements.length - 1];
+                      canBuildRoad = [u, v].includes(lastSettlement);
+                  }
+              } else {
+                  canBuildRoad = checkRoadAdjacency(u, v, myPlayerState);
+              }
+          }
+      }
+  }
+
   const handleNodeClick = (nodeId, e) => {
     if (!isMyTurn || isRobberTime) return;
     setBuildMenu({ type: 'node', data: { nodeId }, x: e.clientX, y: e.clientY });
@@ -94,39 +115,14 @@ export default function GameScreen({ user, gameId, setView, setActiveGameId }) {
     setBuildMenu({ type: 'edge', data: { u, v }, x: e.clientX, y: e.clientY });
   };
 
-  const handleHexClick = (hexId) => {
-    if (!isRobberTime) return;
-    sendAction("move_robber", { hexId });
-  };
-
-  // --- MENU CONFIRMATION LOGIC (Optimistic Frontend Validation) ---
   const confirmBuild = (actionType) => {
     if (!buildMenu) return;
     
-    // Check rules using our imported shared logic
-    if (actionType === 'build_settlement') {
-        if (!hasEnoughResources(myPlayerState, 'SMALL_CAT', isSetupPhase)) return alert("Not enough resources!");
-        if (!checkSettlementSpacing(buildMenu.data.nodeId, game)) return alert("Node is too close to another settlement!");
-        if (!isSetupPhase) {
-            const hasRoad = myPlayerState.roads.some(r => r.split("-").map(Number).includes(buildMenu.data.nodeId));
-            if (!hasRoad) return alert("Must connect to your road network!");
-        }
-    }
-    
-    if (actionType === 'build_city') {
-        if (!hasEnoughResources(myPlayerState, 'BIG_CAT')) return alert("Not enough resources!");
-        if (!myPlayerState.settlements.includes(buildMenu.data.nodeId)) return alert("You must build a settlement here first!");
-        if (isSetupPhase) return alert("Cannot build cities during setup!");
-    }
+    // Quick final resource check before sending
+    if (actionType === 'build_settlement' && !hasEnoughResources(myPlayerState, 'SMALL_CAT', isSetupPhase)) return alert("Not enough resources!");
+    if (actionType === 'build_city' && !hasEnoughResources(myPlayerState, 'BIG_CAT')) return alert("Not enough resources!");
+    if (actionType === 'build_road' && !hasEnoughResources(myPlayerState, 'WORMHOLE_LANE', isSetupPhase)) return alert("Not enough resources!");
 
-    if (actionType === 'build_road') {
-        if (!hasEnoughResources(myPlayerState, 'WORMHOLE_LANE', isSetupPhase)) return alert("Not enough resources!");
-        if ((myPlayerState.roads.length > 0 || myPlayerState.settlements.length > 0) && !checkRoadAdjacency(buildMenu.data.u, buildMenu.data.v, myPlayerState)) {
-            return alert("Must connect to your existing network!");
-        }
-    }
-
-    // All frontend checks passed! Send action to backend and close the menu
     sendAction(actionType, buildMenu.data);
     setBuildMenu(null);
   };
@@ -136,32 +132,46 @@ export default function GameScreen({ user, gameId, setView, setActiveGameId }) {
   return (
     <div style={{ display: "flex", height: "100vh", padding: "10px", gap: "10px", boxSizing: "border-box", maxWidth: "100vw" }} onClick={() => setBuildMenu(null)}>
       
-      {/* ✨ FLOATING BUILD MENU */}
+      {/* ✨ SMALLER, DYNAMIC BUILD MENU */}
       {buildMenu && (
         <div 
             onClick={(e) => e.stopPropagation()} 
-            style={{ position: 'fixed', left: buildMenu.x + 15, top: buildMenu.y - 30, zIndex: 9999, background: '#111', border: '2px solid #00ff00', padding: '10px', borderRadius: '8px', display: 'flex', flexDirection: 'column', gap: '6px', boxShadow: '0px 0px 15px rgba(0,255,0,0.3)' }}
+            style={{ 
+                position: 'fixed', left: buildMenu.x + 15, top: buildMenu.y - 30, zIndex: 9999, 
+                background: '#151520', border: '1px solid #00ff00', padding: '6px 8px', 
+                borderRadius: '6px', display: 'flex', flexDirection: 'column', gap: '4px', 
+                boxShadow: '0px 0px 10px rgba(0,255,0,0.3)' 
+            }}
         >
-            <h4 style={{ margin: '0 0 5px 0', color: '#eee', fontSize: '13px', textAlign: 'center' }}>Construction</h4>
+            <h4 style={{ margin: '0 0 2px 0', color: '#fff', fontSize: '11px', textAlign: 'center', textTransform: 'uppercase' }}>Build</h4>
             
             {buildMenu.type === 'node' && (
                 <>
-                    <button onClick={() => confirmBuild('build_settlement')} style={{ fontSize: '12px', padding: '6px' }}>🏠 Build Colony</button>
-                    <button onClick={() => confirmBuild('build_city')} style={{ fontSize: '12px', padding: '6px' }}>🏙️ Upgrade to City</button>
+                    <button 
+                        onClick={() => confirmBuild('build_settlement')} 
+                        disabled={!canBuildSettlement}
+                        style={{ fontSize: '11px', padding: '4px', opacity: canBuildSettlement ? 1 : 0.4, cursor: canBuildSettlement ? 'pointer' : 'not-allowed' }}
+                    >🏠 Colony</button>
+                    <button 
+                        onClick={() => confirmBuild('build_city')} 
+                        disabled={!canBuildCity}
+                        style={{ fontSize: '11px', padding: '4px', opacity: canBuildCity ? 1 : 0.4, cursor: canBuildCity ? 'pointer' : 'not-allowed' }}
+                    >🏙️ City</button>
                 </>
             )}
             
             {buildMenu.type === 'edge' && (
-                <button onClick={() => confirmBuild('build_road')} style={{ fontSize: '12px', padding: '6px' }}>🛣️ Build Lane</button>
+                <button 
+                    onClick={() => confirmBuild('build_road')} 
+                    disabled={!canBuildRoad}
+                    style={{ fontSize: '11px', padding: '4px', opacity: canBuildRoad ? 1 : 0.4, cursor: canBuildRoad ? 'pointer' : 'not-allowed' }}
+                >🛣️ Lane</button>
             )}
-
-            <button onClick={() => setBuildMenu(null)} style={{ fontSize: '11px', padding: '4px', background: '#550000', color: '#fff', marginTop: '4px' }}>Cancel</button>
         </div>
       )}
 
       {/* LEFT: BOARD AREA */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0 }}>
-        
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "5px" }}>
             <h3 style={{ margin: 0 }}>Sector: {game._id.slice(-6)}</h3>
             <button onClick={handleQuit} style={{ margin: 0, padding: "4px 10px" }}>Quit Game</button>
@@ -174,23 +184,15 @@ export default function GameScreen({ user, gameId, setView, setActiveGameId }) {
         )}
         
         <div style={{ flex: 1, minHeight: 0, display: "flex", justifyContent: "center", alignItems: "center", background: "#05050a", border: "2px solid #333", borderRadius: "8px", padding: "10px", overflow: "hidden" }}>
-            <GameBoard 
-                game={game} 
-                user={user} 
-                onNodeClick={isRobberTime ? null : handleNodeClick} 
-                onEdgeClick={isRobberTime ? null : handleEdgeClick} 
-                onHexClick={isRobberTime ? handleHexClick : null}
-            />
+            <GameBoard game={game} user={user} onNodeClick={isRobberTime ? null : handleNodeClick} onEdgeClick={isRobberTime ? null : handleEdgeClick} onHexClick={isRobberTime ? handleHexClick : null} />
         </div>
-
         <div style={{ textAlign: "center", marginTop: "5px", color: "#666", fontSize: "13px" }}>
-            💡 <i>Click nodes and lines to open the construction menu.</i>
+            💡 <i>Valid building spots are highlighted green! Click outside the menu to cancel.</i>
         </div>
       </div>
 
       {/* RIGHT: SIDEBAR */}
       <div style={{ width: "260px", display: "flex", flexDirection: "column", gap: "10px", overflowY: "hidden" }}>
-        
         <div className="panel" style={{ padding: "12px", margin: 0 }}>
           <h4 style={{ margin: "0 0 10px 0" }}>Command Center</h4>
           <div style={{ fontSize: "13px", marginBottom: "10px", color: "#ccc" }}>
