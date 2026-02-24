@@ -2,7 +2,12 @@ const { User } = require("../models/Schemas");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 
-const JWT_SECRET = process.env.JWT_SECRET || "super_secret_kitten_key";
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  throw new Error("FATAL ERROR: JWT_SECRET is not defined.");
+  process.exit(1);
+}
+
 const validateDisplayname = (name) => {
   const cleaned = String(name || "").trim();
   if (cleaned.length < 3 || cleaned.length > 20) {
