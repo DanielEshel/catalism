@@ -118,6 +118,10 @@ const finalizeSocketJoin = async (gameId, userId) => {
   }
 
   await game.save();
+
+  // Ensure the player names are populated before returning to the server
+  await game.populate("playerStates.userId", "displayName");
+  
   return { game, event };
 };
 
@@ -161,7 +165,9 @@ const purgeGhostPlayer = async (gameId, userId) => {
 
 const getGameState = async (gameId) => {
   if (!gameId) return null;
-  return await Game.findById(gameId).populate("hostId", "displayName");
+  return await Game.findById(gameId)
+                   .populate("hostId", "displayName")
+                   .populate("playerStates.userId", "displayName");
 };
 
 // UPDATED: Now accepts userId to find their specific game
