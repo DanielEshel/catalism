@@ -29,6 +29,8 @@ export default function GameScreen({ user, gameId, setView, setActiveGameId }) {
     // 💡 This sends the 'quit_game' action to the backend
     sendAction("quit_game", {}); 
     leaveGame(); // Clean up socket connection
+    // 2. Set the "Blocker" so the Lobby doesn't auto-rejoin
+    sessionStorage.setItem("justQuitGameId", gameId);
     setActiveGameId(null);
     setView("lobby");
   };
