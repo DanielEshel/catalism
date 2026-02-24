@@ -22,22 +22,32 @@ const protect = (req, res, next) => {
 
 // --- SOCKET AUTH (Real-Time) ---
 const socketAuth = (socket, next) => {
-    // Read the raw cookie header from the websocket handshake
-    const cookieString = socket.request.headers.cookie;
-    if (!cookieString) return next(new Error("Auth Error: No Token Provided"));
-
-    // Extract the token from the cookie string
-    const tokenMatch = cookieString.match(/(?:^|; )token=([^;]*)/);
-    const token = tokenMatch ? tokenMatch[1] : null;
-    
-    if (!token) return next(new Error("Auth Error: No Token Provided"));
-    
     try {
+        // Read the raw cookie header from the websocket handshake
+        const cookieString = socket.request.headers.cookie;
+        if (!cookieString) {
+            return next(new Error("Authentication required"));
+        }
+
+        // Extract the token using split() instead of Regex for better reliability
+        const token = cookieString
+            .split(';')
+            .find(c => c.trim().startsWith('token='))
+            ?.split('=')[1];
+        
+        if (!token) {
+            return next(new Error("Authentication required"));
+        }
+        
+        // Verify Token
         const decoded = jwt.verify(token, JWT_SECRET);
+        
+        // Attach user ID to the socket for use in handleClientStream
         socket.data.userId = decoded.id; 
         next();
     } catch (err) {
-        next(new Error("Auth Error: Invalid Token"));
+        console.error(`[SOCKET AUTH ERROR]: ${err.message}`);
+        next(new Error("Invalid or expired session"));
     }
 };
 
