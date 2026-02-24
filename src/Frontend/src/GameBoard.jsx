@@ -1,66 +1,32 @@
-// src/GameBoard.jsx
+// src/Frontend/src/GameBoard.jsx
 import React, { useMemo } from "react";
+import { checkSettlementSpacing, checkRoadAdjacency } from "./utils/gameRules";
+import { RES_IMAGES, PLAYER_COLORS } from "./constants/boardConstants.js";
+import HexLayer from "./components/Board/HexLayer";
+import EdgeLayer from "./components/Board/EdgeLayer";
+import NodeLayer from "./components/Board/NodeLayer";
 
-// ✨ Import the rules to power the visual highlights
-import { checkSettlementSpacing, checkRoadAdjacency } from "./utils/gameRules"; 
-
-import resCarbonFiber from "./assets/resouces/res_carbon_fiber.png";
-import resCatnip from "./assets/resouces/res_catnip.png";
-import resCosmicMilk from "./assets/resouces/res_cosmic_milk.png";
-import resMice from "./assets/resouces/res_mice.png";
-import resSpaceCrystal from "./assets/resouces/res_space_crystal.png";
-import Void from "./assets/resouces/void.png";
-
-const RES_IMAGES = {
-  "Space Crystal": resSpaceCrystal,
-  Mice: resMice,
-  Catnip: resCatnip,
-  "Carbon Fiber": resCarbonFiber,
-  "Cosmic Milk": resCosmicMilk,
-  Void: Void,
-};
-
-const RES_COLORS = {
-  Void: "#4b0082",
-};
-
-const PLAYER_COLORS = ["#ff5555", "#5555ff", "#55ff55", "#ffff55"];
-
-// ✨ ADDED onHexClick back into the props for the robber
 export default function GameBoard({ game, user, onNodeClick, onEdgeClick, onHexClick }) {
   const robberHex = game?.boardState?.robberHex;
 
   const { renderData, viewBox } = useMemo(() => {
     if (!game?.boardState) {
       return {
-        renderData: {
-          nodeMap: new Map(),
-          hexData: [],
-          edgeData: [],
-          nodeOwner: {},
-          validNodes: new Set(), // ✨ Added to initial state
-        },
+        renderData: { nodeMap: new Map(), hexData: [], edgeData: [], nodeOwner: {}, validNodes: new Set() },
         viewBox: "0 0 100 100",
       };
     }
 
     const { nodes, edges, hexes } = game.boardState;
 
-    // --- SCALE ADJUSTMENT ---
     const SCALE_X = 18;
     const SCALE_Y = 21;
     const PADDING = 30;
 
-    let minX = Infinity,
-      maxX = -Infinity;
-    let minY = Infinity,
-      maxY = -Infinity;
-
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
     nodes.forEach((n) => {
-      if (n.x < minX) minX = n.x;
-      if (n.x > maxX) maxX = n.x;
-      if (n.y < minY) minY = n.y;
-      if (n.y > maxY) maxY = n.y;
+      if (n.x < minX) minX = n.x; if (n.x > maxX) maxX = n.x;
+      if (n.y < minY) minY = n.y; if (n.y > maxY) maxY = n.y;
     });
 
     const nodeMap = new Map();
@@ -73,7 +39,6 @@ export default function GameBoard({ game, user, onNodeClick, onEdgeClick, onHexC
     const nodeOwner = {};
     const edgeOwner = {};
 
-    // ✨ Track totals for Setup Phase calculation
     let totalSettlements = 0;
     let totalRoads = 0;
 
@@ -84,26 +49,11 @@ export default function GameBoard({ game, user, onNodeClick, onEdgeClick, onHexC
       totalSettlements += p.settlements.length + p.cities.length;
       totalRoads += p.roads.length;
 
-      p.settlements.forEach(
-        (id) =>
-          (nodeOwner[id] = {
-            color,
-            type: "S",
-            isMe: p.userId._id === user?._id,
-          }),
-      );
-      p.cities.forEach(
-        (id) =>
-          (nodeOwner[id] = {
-            color,
-            type: "C",
-            isMe: p.userId._id === user?._id,
-          }),
-      );
+      p.settlements.forEach((id) => (nodeOwner[id] = { color, type: "S", isMe: p.userId._id === user?._id }));
+      p.cities.forEach((id) => (nodeOwner[id] = { color, type: "C", isMe: p.userId._id === user?._id }));
       p.roads.forEach((key) => (edgeOwner[key] = color));
     });
 
-    // ✨ LOGIC: Determine which spots are valid to build on right now
     const isSetupPhase = totalSettlements < game.maxPlayers * 2 || totalRoads < game.maxPlayers * 2;
     const isMyTurn = game.turn === user?._id;
     const isRobberTime = isMyTurn && game.mustMoveRobber;
@@ -112,7 +62,7 @@ export default function GameBoard({ game, user, onNodeClick, onEdgeClick, onHexC
     const validNodes = new Set();
     if (isMyTurn && !isRobberTime && myPlayerState) {
         nodes.forEach(n => {
-            if (nodeOwner[n.id]) return; // Skip if already built on
+            if (nodeOwner[n.id]) return;
             const spacingOk = checkSettlementSpacing(n.id, game);
             const networkOk = isSetupPhase || myPlayerState.roads.some(r => r.split("-").map(Number).includes(n.id));
             if (spacingOk && networkOk) validNodes.add(n.id);
@@ -122,10 +72,8 @@ export default function GameBoard({ game, user, onNodeClick, onEdgeClick, onHexC
     const hexData = hexes.map((h) => {
       const hexNodes = h.nodeIds.map((id) => nodeMap.get(id));
       const points = hexNodes.map((n) => `${n.sx},${n.sy}`).join(" ");
-
       const cx = hexNodes.reduce((sum, n) => sum + n.sx, 0) / 6;
       const cy = hexNodes.reduce((sum, n) => sum + n.sy, 0) / 6;
-
       return { ...h, points, cx, cy };
     });
 
@@ -134,7 +82,6 @@ export default function GameBoard({ game, user, onNodeClick, onEdgeClick, onHexC
       const v = nodeMap.get(e.v);
       const edgeKey = e.u < e.v ? `${e.u}-${e.v}` : `${e.v}-${e.u}`;
       
-      // ✨ LOGIC: Validate edges for dashed-green lines
       let isValid = false;
       if (isMyTurn && !isRobberTime && myPlayerState && !edgeOwner[edgeKey]) {
           if (isSetupPhase) {
@@ -147,7 +94,7 @@ export default function GameBoard({ game, user, onNodeClick, onEdgeClick, onHexC
           }
       }
 
-      return { u, v, color: edgeOwner[edgeKey], isValid }; // Added isValid to return
+      return { u, v, color: edgeOwner[edgeKey], isValid };
     });
 
     const width = (maxX - minX) * SCALE_X + PADDING * 2;
@@ -163,181 +110,25 @@ export default function GameBoard({ game, user, onNodeClick, onEdgeClick, onHexC
     <svg
       viewBox={viewBox}
       style={{
-        width: "100%",
-        maxWidth: "100%",
-        height: "100%",
-        background: "#0a0a1a",
-        borderRadius: "8px",
-        border: "2px solid #333",
+        width: "100%", maxWidth: "100%", height: "100%",
+        background: "#0a0a1a", borderRadius: "8px", border: "2px solid #333",
       }}
     >
       <defs>
         {Object.entries(RES_IMAGES).map(([resName, imgSrc]) => {
           if (!imgSrc) return null;
           const patternId = `bg-${resName.replace(/\s+/g, "")}`;
-
           return (
-            <pattern
-              key={patternId}
-              id={patternId}
-              patternUnits="objectBoundingBox"
-              patternContentUnits="objectBoundingBox"
-              width="1"
-              height="1"
-            >
-              <image
-                href={imgSrc}
-                x="-0.05"
-                y="-0.05"
-                width="1.1"
-                height="1.1"
-                preserveAspectRatio="xMidYMid slice"
-              />
+            <pattern key={patternId} id={patternId} patternUnits="objectBoundingBox" patternContentUnits="objectBoundingBox" width="1" height="1">
+              <image href={imgSrc} x="-0.05" y="-0.05" width="1.1" height="1.1" preserveAspectRatio="xMidYMid slice" />
             </pattern>
           );
         })}
       </defs>
 
-      {/* 1. RENDER HEXAGONS */}
-      {renderData.hexData.map((h) => {
-        const fillUrl = RES_IMAGES[h.resource]
-          ? `url(#bg-${h.resource.replace(/\s+/g, "")})`
-          : RES_COLORS[h.resource] || "#333";
-
-        return (
-          <g 
-            key={h.id}
-            onClick={(event) => {
-              if (onHexClick) {
-                event.stopPropagation();
-                onHexClick(h.id);
-              }
-            }}
-            className={onHexClick ? "clickable-hex" : ""}
-            style={{ cursor: onHexClick ? "pointer" : "default" }}
-          >
-            <polygon
-              points={h.points}
-              fill={fillUrl}
-              stroke="#222"
-              strokeWidth="2"
-            />
-            {h.resource !== "Void" && (
-              <circle cx={h.cx} cy={h.cy} r="14" fill="#eee" opacity="0.9" />
-            )}
-            <text
-              x={h.cx}
-              y={h.cy + 4}
-              textAnchor="middle"
-              fontSize="12"
-              fontWeight="bold"
-              fill={h.number === 6 || h.number === 8 ? "#d00" : "#111"}
-            >
-              {h.resource === "Void"
-                ? robberHex === h.id
-                  ? "👽"
-                  : ""
-                : robberHex === h.id
-                  ? "👽"
-                  : h.number}
-            </text>
-          </g>
-        );
-      })}
-
-      {/* 2. RENDER EDGES (ROADS) */}
-      {renderData.edgeData.map((e, idx) => (
-        <g key={`edge-${idx}`}>
-          <line
-            x1={e.u.sx}
-            y1={e.u.sy}
-            x2={e.v.sx}
-            y2={e.v.sy}
-            stroke={e.color || (e.isValid ? "rgba(0, 255, 0, 0.5)" : "#444")}  // ✨ Highlight valid edges
-            strokeWidth={e.color ? "6" : (e.isValid ? "4" : "2")}
-            strokeDasharray={e.isValid && !e.color ? "4 4" : "none"} // ✨ Dashed effect
-          />
-          <line
-            x1={e.u.sx}
-            y1={e.u.sy}
-            x2={e.v.sx}
-            y2={e.v.sy}
-            stroke="transparent"
-            strokeWidth="15"
-            className="clickable-edge"
-            style={{ cursor: "pointer" }}
-            onClick={(event) => {
-              event.stopPropagation();
-              if (onEdgeClick) onEdgeClick(e.u.id, e.v.id, event);
-            }}
-          />
-        </g>
-      ))}
-
-      {/* 3. RENDER NODES (SETTLEMENTS/CITIES) */}
-      {Array.from(renderData.nodeMap.values()).map((n) => {
-        const owner = renderData.nodeOwner[n.id];
-        const isValidEmpty = renderData.validNodes.has(n.id); // ✨ Check if this node is valid to build on
-
-        if (owner) {
-          if (owner.type === "C") {
-            return (
-              <rect
-                key={n.id}
-                x={n.sx - 10}
-                y={n.sy - 10}
-                width="20"
-                height="20"
-                fill={owner.color}
-                stroke="#fff"
-                strokeWidth="2"
-                className={owner.isMe ? "clickable-node" : ""}
-                style={{ cursor: owner.isMe ? "pointer" : "default" }}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  if (owner.isMe && onNodeClick) onNodeClick(n.id, event);
-                }}
-              />
-            );
-          } else {
-            return (
-              <circle
-                key={n.id}
-                cx={n.sx}
-                cy={n.sy}
-                r="8"
-                fill={owner.color}
-                stroke="#fff"
-                strokeWidth="2"
-                className={owner.isMe ? "clickable-node" : ""}
-                style={{ cursor: owner.isMe ? "pointer" : "default" }}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  if (owner.isMe && onNodeClick) onNodeClick(n.id, event);
-                }}
-              />
-            );
-          }
-        } else {
-          return (
-            <circle
-              key={n.id}
-              cx={n.sx}
-              cy={n.sy}
-              r={isValidEmpty ? "10" : "6"} // ✨ Pulse larger if valid
-              fill={isValidEmpty ? "rgba(0, 255, 0, 0.4)" : "#222"} // ✨ Green fill
-              stroke={isValidEmpty ? "#00ff00" : "#555"} // ✨ Green border
-              strokeWidth={isValidEmpty ? "2" : "1"}
-              className="clickable-node"
-              style={{ cursor: "pointer", transition: "all 0.2s" }}
-              onClick={(event) => {
-                event.stopPropagation();
-                if (onNodeClick) onNodeClick(n.id, event);
-              }}
-            />
-          );
-        }
-      })}
+      <HexLayer hexData={renderData.hexData} robberHex={robberHex} onHexClick={onHexClick} />
+      <EdgeLayer edgeData={renderData.edgeData} onEdgeClick={onEdgeClick} />
+      <NodeLayer nodeMap={renderData.nodeMap} nodeOwner={renderData.nodeOwner} validNodes={renderData.validNodes} onNodeClick={onNodeClick} />
     </svg>
   );
 }
