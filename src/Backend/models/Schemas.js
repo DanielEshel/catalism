@@ -44,15 +44,13 @@ const playerStateSchema = new mongoose.Schema({
 const gameSchema = new mongoose.Schema({
     hostId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     maxPlayers: { type: Number, default: 4 },
-    status: { type: String, enum: ['lobby', 'in-progress', 'finished'], default: 'lobby' },
+    status: { type: String, enum: ['lobby', 'in-progress', 'finished', 'dnf'], default: 'lobby' },
     playerIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
     playerStates: [playerStateSchema],
     turn: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     startTime: Date,
     
-    // NEW FLAG: Tracks if the dice have been rolled for the current turn
     diceRolled: { type: Boolean, default: false }, 
-
     mustMoveRobber: { type: Boolean, default: false },
     
     boardState: {
@@ -61,7 +59,7 @@ const gameSchema = new mongoose.Schema({
         edges: [edgeSchema],
         robberHex: Number
     }
-});
+}, { timestamps: true });
 
 const actionSchema = new mongoose.Schema({
     gameId: { type: mongoose.Schema.Types.ObjectId, ref: 'Game', required: true },
@@ -78,7 +76,7 @@ const userSchema = new mongoose.Schema({
     passwordHash: String,
     wins: { type: Number, default: 0 },
     losses: { type: Number, default: 0 }
-});
+}, { timestamps: true });
 
 const User = mongoose.model('User', userSchema);
 const Game = mongoose.model('Game', gameSchema);
