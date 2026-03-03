@@ -17,8 +17,47 @@ const server = http.createServer(app);
 app.use(express.json());
 app.use(cookieParser()); // <--- Apply cookie-parser globally
 
-// --- DATABASE ---
-connectDB();
+const runMaintenance = async (inactiveTimeMs) => {
+    try {
+        console.log(`[Maintenance] Running sweep for games inactive > ${inactiveTimeMs / 60000} mins...`);
+
+        // --- 1. HANDLE LOBBIES (Total Delete) ---
+        const oldLobbies = await GameLogic.getOldGamesByStatus('lobby', inactiveTimeMs);
+        const emptyLobbyIds = oldLobbies
+            .map(g => g._id.toString())
+            .filter(id => SocketController.isRoomEmpty(id));
+
+        if (emptyLobbyIds.length > 0) {
+            await GameLogic.deleteGamesCompletely(emptyLobbyIds);
+        }
+
+        // --- 2. HANDLE IN-PROGRESS (Mark DNF) ---
+        const oldInProgress = await GameLogic.getOldGamesByStatus('in-progress', inactiveTimeMs);
+        const emptyInProgressIds = oldInProgress
+            .map(g => g._id.toString())
+            .filter(id => SocketController.isRoomEmpty(id));
+
+        if (emptyInProgressIds.length > 0) {
+            await GameLogic.markGamesAsDNF(emptyInProgressIds);
+        }
+
+    } catch (err) {
+        console.error("[Maintenance] Sweep failed:", err);
+    }
+};
+
+connectDB().then(() => {
+    console.log("Database initialized.");
+
+    const ONE_HOUR = 60 * 60 * 1000;
+    const ONE_DAY = 24 * 60 * 60 * 1000;
+
+    // Run crash-recovery maintenance immediately on boot
+    runMaintenance(ONE_HOUR);
+
+    // Schedule standard maintenance to run every 24 hours
+    setInterval(() => runMaintenance(ONE_DAY), ONE_DAY);
+});
 
 // --- HTTP ROUTES ---
 app.use("/api", httpController); // <--- All HTTP traffic goes to the controller
