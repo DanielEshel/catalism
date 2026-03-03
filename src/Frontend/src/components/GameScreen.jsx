@@ -14,23 +14,22 @@ export default function GameScreen({ user, gameId, setView, setActiveGameId }) {
   const { game, logs, sendAction, leaveGame } = useGameState(gameId);
   const [buildMenu, setBuildMenu] = useState(null); 
 
-  // Safely derive state
+  // Derived state
   const myPlayerState = game?.playerStates?.find(p => (p.userId._id || p.userId) === user?._id);
   const isMyTurn = game?.turn === user?._id;
   const isRobberTime = isMyTurn && game?.mustMoveRobber;
   
-  const totalBuilds = game?.playerStates?.reduce((s, p) => s + p.settlements.length + p.cities.length + p.roads.length, 0) || 0;
-  const isSetupPhase = totalBuilds < (game?.maxPlayers * 4); 
+  const totalSettlements = game?.playerStates?.reduce((s, p) => s + p.settlements.length + p.cities.length, 0) || 0;
+  const totalRoads = game?.playerStates?.reduce((s, p) => s + p.roads.length, 0) || 0;
+  const isSetupPhase = totalSettlements < (game?.maxPlayers * 2) || totalRoads < (game?.maxPlayers * 2);
 
   const buildValidation = useBuildValidation(game, myPlayerState, buildMenu, isSetupPhase);
 
   // --- HANDLERS ---
   const handleQuit = () => {
-    // 💡 This sends the 'quit_game' action to the backend
     sendAction("quit_game", {}); 
-    leaveGame(); // Clean up socket connection
-    // 2. Set the "Blocker" so the Lobby doesn't auto-rejoin
     sessionStorage.setItem("justQuitGameId", gameId);
+    leaveGame(); 
     setActiveGameId(null);
     setView("lobby");
   };
@@ -57,10 +56,29 @@ export default function GameScreen({ user, gameId, setView, setActiveGameId }) {
     
     sendAction(actionType, buildMenu.data);
     setBuildMenu(null);
+
+    // ✨ SNAKE-DRAFT AWARE AUTO-END TURN
+    if (isSetupPhase && actionType === 'build_road') {
+        const myRoadCount = myPlayerState.roads.length + 1;
+        const playersCount = game.maxPlayers;
+        
+        // 1. Pivot Check: Is this the last player finishing their FIRST settlement/road?
+        const isLastPlayerFirstTurn = (myRoadCount === 1 && totalRoads === playersCount - 1);
+
+        // 2. Final Turn Check: Is this the VERY LAST road of the setup phase?
+        // If total roads will be (players * 2), setup is over and this player starts their turn.
+        const isFinalSetupPlacement = (totalRoads + 1 === playersCount * 2);
+
+        // Only auto-end if it's NOT a double-turn pivot AND NOT the end of setup
+        if (!isLastPlayerFirstTurn && !isFinalSetupPlacement) {
+            setTimeout(() => {
+                sendAction("end_turn", {});
+            }, 500);
+        }
+    }
   };
 
-  // 1. ALL HOOKS FINISHED? Now we can return early for status screens
-  if (!game) return <div className="container"><h2>Loading Sector...</h2></div>;
+  if (!game) return <div className="container"><h2>Loading Sector Data...</h2></div>;
   if (game.status === "lobby") return <LobbyScreen game={game} onQuit={handleQuit} />;
   if (game.status === "finished") return <GameOverScreen game={game} onQuit={handleQuit} />;
 
@@ -74,7 +92,6 @@ export default function GameScreen({ user, gameId, setView, setActiveGameId }) {
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "5px" }}>
             <h3 style={{ margin: 0 }}>Sector: {game._id.slice(-6)}</h3>
-            {/* ✨ Quit button moved to Sidebar for a cleaner look, or keep here */}
             <button onClick={handleQuit} style={{ margin: 0, padding: "4px 10px" }}>Quit</button>
         </div>
 
@@ -96,13 +113,9 @@ export default function GameScreen({ user, gameId, setView, setActiveGameId }) {
       </div>
 
       <GameSidebar 
-        game={game} 
-        user={user} 
-        logs={logs} 
-        isMyTurn={isMyTurn} 
-        canRoll={isMyTurn && !isSetupPhase && !game.diceRolled} 
-        sendAction={sendAction} 
-        onQuit={handleQuit} // ✨ Pass handleQuit to sidebar
+        game={game} user={user} logs={logs} 
+        isMyTurn={isMyTurn} canRoll={isMyTurn && !isSetupPhase && !game.diceRolled} 
+        sendAction={sendAction} onQuit={handleQuit} 
       />
     </div>
   );
