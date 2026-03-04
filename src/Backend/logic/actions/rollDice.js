@@ -13,6 +13,20 @@ module.exports = ({ game, userId, isSetupPhase }) => {
 
   if (sum === 7) {
     game.mustMoveRobber = true;
+
+    game.playerStates.forEach(player => {
+        // Sum up all their resources
+        const totalCards = Object.values(player.resources || {}).reduce((sum, count) => sum + count, 0);
+
+        if (totalCards > 7) {
+            const amountToDrop = Math.floor(totalCards / 2);
+            game.pendingDiscards.push({
+                userId: player.userId,
+                amountToDiscard: amountToDrop
+            });
+        }
+    });
+
     return {
       logMessage: `Rolled a 7! The Space Robber is on the move!`,
       event: { type: "ROBBER_ACTIVATED", payload: { userId } }

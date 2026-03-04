@@ -9,7 +9,7 @@ const rollDice = require("./actions/rollDice");
 const moveRobber = require("./actions/moveRobber");
 const endTurn = require("./actions/endTurn");
 const quitGame = require("./actions/quitGame");
-
+const discardCards = require("./actions/discardCards");
 const ACTIONS_REQUIRING_TURN = new Set(["build_road", "build_settlement", "build_city", "end_turn", "buy_dev_card", "trade_bank", "play_dev_card", "move_robber", "roll_dice"]);
 const ACTIONS_REQUIRING_ROLL = new Set(["build_road", "build_settlement", "build_city", "end_turn", "buy_dev_card", "trade_bank", "trade_offer"]);
 
@@ -19,6 +19,13 @@ const processAction = async (gameId, userId, actionType, payload) => {
 
   const player = game.playerStates.find((p) => p.userId.toString() === userId);
   if (!player) throw new Error("Player not found.");
+
+  // ✨ THE GATEKEEPER: Is the game frozen waiting for discards?
+    if (game.pendingDiscards && game.pendingDiscards.length > 0) {
+        if (actionType !== 'discard_cards') {
+            throw new Error("Action blocked: Waiting for players to discard cards.");
+        }
+    }
 
   const lastAction = await Action.findOne({ gameId }).sort({ actionNum: -1 });
 
@@ -46,6 +53,7 @@ const processAction = async (gameId, userId, actionType, payload) => {
     case "build_city":       result = buildCity(context); break;
     case "end_turn":         result = endTurn(context); break;
     case "quit_game":        result = quitGame(context); break;
+    case "discard_cards":    result = discardCards(context); break;
     default: throw new Error("Unknown action type.");
   }
 
@@ -58,7 +66,7 @@ const processAction = async (gameId, userId, actionType, payload) => {
   // Force Mongoose to recognize array modifications (crucial for quit_game)
   game.markModified('playerIds');
   game.markModified('playerStates');
-
+  game.markModified('pendingDiscards'); // ✨ Added to ensure array deletion saves
   await game.save();
 
   // Audit Log
