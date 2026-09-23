@@ -15,11 +15,15 @@ module.exports = ({ game, userId, isSetupPhase }) => {
     game.mustMoveRobber = true;
 
     game.playerStates.forEach(player => {
-        // Sum up all their resources
+
+        // Sum up player resources
         const totalCards = Object.values(player.resources || {}).reduce((sum, count) => sum + count, 0);
 
-        if (totalCards > 7) {
+       if (totalCards > 7) {
             const amountToDrop = Math.floor(totalCards / 2);
+            
+            game.pendingDiscards ??= []; // Clean, one-line fallback
+            
             game.pendingDiscards.push({
                 userId: player.userId,
                 amountToDiscard: amountToDrop

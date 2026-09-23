@@ -1,6 +1,7 @@
 // controllers/socketController.js
 const { Server } = require("socket.io");
 const { socketAuth } = require("../middleware/authMiddleware");
+const { Game } = require('../models/Schemas');
 const GameLogic = require("../logic/gameLogic");
 
 const gamePurgeTimeouts = new Map(); // gameId -> Timeout
@@ -53,7 +54,7 @@ const init = (httpServer, actionHandler) => {
 		socket.on("disconnecting", () => {
 			// Check all rooms this socket is in (excluding their own private ID room)
 			for (const gameId of socket.rooms) {
-				if (gameId === socket.id) continue;
+				if (gameId === socket.id || gameId === userId ) continue;
 
 				const room = io.sockets.adapter.rooms.get(gameId);
 				// If room size is 1, it means this socket is the last one leaving

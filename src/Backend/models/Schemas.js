@@ -53,6 +53,12 @@ const gameSchema = new mongoose.Schema({
     diceRolled: { type: Boolean, default: false }, 
     mustMoveRobber: { type: Boolean, default: false },
     
+    pendingDiscards: [{
+        userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+        amountToDiscard: Number,
+        _id: false
+    }],
+
     boardState: {
         hexes: [hexSchema],
         nodes: [nodeSchema],
