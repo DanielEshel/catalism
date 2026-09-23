@@ -8,6 +8,7 @@ import { hasEnoughResources } from "../utils/gameRules";
 // Modular Components
 import BuildMenu from "./Game/BuildMenu.jsx";
 import GameSidebar from "./Game/GameSidebar.jsx";
+import ActionBar from "./Game/ActionBar.jsx"; // <-- Add this import
 import { LobbyScreen, GameOverScreen } from "./Game/GameStatusScreen.jsx";
 
 export default function GameScreen({ user, gameId, setView, setActiveGameId }) {
@@ -22,7 +23,8 @@ export default function GameScreen({ user, gameId, setView, setActiveGameId }) {
   const totalSettlements = game?.playerStates?.reduce((s, p) => s + p.settlements.length + p.cities.length, 0) || 0;
   const totalRoads = game?.playerStates?.reduce((s, p) => s + p.roads.length, 0) || 0;
   const isSetupPhase = totalSettlements < (game?.maxPlayers * 2) || totalRoads < (game?.maxPlayers * 2);
-
+  const canRoll = isMyTurn && !isSetupPhase && !game?.diceRolled;
+  const canEndTurn = isMyTurn && (isSetupPhase || game?.diceRolled);
   const buildValidation = useBuildValidation(game, myPlayerState, buildMenu, isSetupPhase);
 
   // --- HANDLERS ---
@@ -84,23 +86,26 @@ export default function GameScreen({ user, gameId, setView, setActiveGameId }) {
 
   return (
     <div 
-      style={{ display: "flex", height: "100vh", padding: "10px", gap: "10px", boxSizing: "border-box" }} 
+      style={{ display: "flex", height: "100vh", padding: "10px", gap: "10px", boxSizing: "border-box" }}
       onClick={() => setBuildMenu(null)}
     >
       <BuildMenu buildMenu={buildMenu} {...buildValidation} onConfirm={confirmBuild} />
-
+      
+      {/* Left Column: Header, Robber Banner, Board, and Action Bar */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+        
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "5px" }}>
             <h3 style={{ margin: 0 }}>Sector: {game._id.slice(-6)}</h3>
             <button onClick={handleQuit} style={{ margin: 0, padding: "4px 10px" }}>Quit</button>
         </div>
-
+        
         {isRobberTime && (
           <div style={{ background: "#aa0000", color: "#fff", padding: "10px", textAlign: "center", borderRadius: "8px", marginBottom: "10px", fontWeight: "bold", border: "2px solid #ff0000" }}>
-            🚨 7 ROLLED! MOVE THE ROBBER! 🚨
+              7 ROLLED! MOVE THE ROBBER!
           </div>
         )}
         
+        {/* Game Board Area */}
         <div style={{ flex: 1, minHeight: 0, display: "flex", justifyContent: "center", alignItems: "center", background: "#05050a", border: "2px solid #333", borderRadius: "8px", padding: "10px", overflow: "hidden" }}>
             <GameBoard 
                 game={game} 
@@ -110,13 +115,23 @@ export default function GameScreen({ user, gameId, setView, setActiveGameId }) {
                 onHexClick={isRobberTime ? handleHexClick : null} 
             />
         </div>
+
+        <ActionBar 
+            isMyTurn={isMyTurn} 
+            canRoll={canRoll} 
+            canEndTurn={canEndTurn} // Pass the new prop here
+            sendAction={sendAction} 
+            resources={myPlayerState?.resources}
+        />
+
       </div>
 
+      {/* Right Column: Existing Sidebar */}
       <GameSidebar 
         game={game} user={user} logs={logs} 
-        isMyTurn={isMyTurn} canRoll={isMyTurn && !isSetupPhase && !game.diceRolled} 
-        sendAction={sendAction} onQuit={handleQuit} 
+        isMyTurn={isMyTurn} 
       />
+
     </div>
   );
 }
