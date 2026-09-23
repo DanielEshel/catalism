@@ -15,11 +15,11 @@ const createGame = async (hostId, maxPlayers = 4) => {
         userId: hostId,
         connected: true, // Host is implicitly connected
         resources: {
-          carbonFiber: 3,
-          catnip: 2,
-          mice: 2,
+          carbonFiber: 0,
+          catnip: 0,
+          mice: 0,
           cosmicMilk: 0,
-          spaceCrystal: 3,
+          spaceCrystal: 0,
         },
         victoryPoints: 0,
         settlements: [],
