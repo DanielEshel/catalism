@@ -12,9 +12,8 @@ import ActionBar from "./Game/ActionBar.jsx"; // <-- Add this import
 import { LobbyScreen, GameOverScreen } from "./Game/GameStatusScreen.jsx";
 
 export default function GameScreen({ user, gameId, setView, setActiveGameId }) {
-  const { game, logs, sendAction, leaveGame } = useGameState(gameId);
-  const [buildMenu, setBuildMenu] = useState(null); 
-
+  const { game, logs, lastRoll, sendAction, leaveGame } = useGameState(gameId); 
+  const [buildMenu, setBuildMenu] = useState(null);
   // Derived state
   const myPlayerState = game?.playerStates?.find(p => (p.userId._id || p.userId) === user?._id);
   const isMyTurn = game?.turn === user?._id;
@@ -119,9 +118,11 @@ export default function GameScreen({ user, gameId, setView, setActiveGameId }) {
         <ActionBar 
             isMyTurn={isMyTurn} 
             canRoll={canRoll} 
-            canEndTurn={canEndTurn} // Pass the new prop here
+            canEndTurn={canEndTurn} 
             sendAction={sendAction} 
             resources={myPlayerState?.resources}
+            lastRoll={lastRoll}
+            mustMoveRobber={game?.mustMoveRobber} 
         />
 
       </div>

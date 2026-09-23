@@ -4,6 +4,7 @@ import comms from '../api/commsController';
 export default function useGameState(gameId) {
   const [game, setGame] = useState(null);
   const [logs, setLogs] = useState([]);
+  const [lastRoll, setLastRoll] = useState(null); // <-- NEW: State for visual dice
 
   // Use a ref to access the latest game state inside socket callbacks
   const gameRef = useRef(null);
@@ -24,6 +25,10 @@ export default function useGameState(gameId) {
       },
       onGamePulse: (g) => {
         setGame(g);
+        // NEW: Clear the visual dice when the turn passes to someone else
+        if (!g.diceRolled) {
+          setLastRoll(null);
+        }
       },
       onActionLog: (data) => {
         const currentGame = gameRef.current;
@@ -36,6 +41,9 @@ export default function useGameState(gameId) {
       onGameEvent: (evt) => {
         if (evt.type === "DICE_ROLLED") {
           const { number, dice, gains } = evt.payload;
+          
+          setLastRoll(dice); // <-- NEW: Capture the [die1, die2] array for visuals
+
           addLog(`🎲 Rolled ${number} (${dice.join("+")})`);
 
           Object.entries(gains).forEach(([pId, resObj]) => {
@@ -70,5 +78,6 @@ export default function useGameState(gameId) {
     }
   };
 
-  return { game, logs, sendAction, leaveGame };
+  // NEW: return lastRoll so the GameScreen can use it
+  return { game, logs, lastRoll, sendAction, leaveGame }; 
 }
