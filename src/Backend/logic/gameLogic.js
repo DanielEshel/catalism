@@ -1,4 +1,4 @@
-const { Game } = require("../models/Schemas");
+const { Game, Action } = require("../models/Schemas");
 const { generateBoardGraph } = require("./boardLogic"); // <--- IMPORT NEW LOGIC
 
 // --- CORE LOGIC ---

@@ -44,6 +44,9 @@ const runMaintenance = async (inactiveTimeMs) => {
     } catch (err) {
         console.error("[Maintenance] Sweep failed:", err);
     }
+    finally {
+        console.log("[Maintenance] Sweep complete.");
+    }
 };
 
 connectDB().then(() => {
